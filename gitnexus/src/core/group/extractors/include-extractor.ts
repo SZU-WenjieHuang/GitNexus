@@ -296,6 +296,11 @@ function isLocalInclude(cleaned: string, suffixIndex: SuffixIndex): boolean {
 export class IncludeExtractor implements ContractExtractor {
   type = 'include' as const;
 
+  /**
+   * Always returns `true`. NOT called by `sync.ts`, which gates extraction via
+   * `config.detect.includes` instead (see `sync.ts:174`). Kept solely to satisfy
+   * the `ContractExtractor` interface so the type stays uniform across extractors.
+   */
   async canExtract(_repo: RepoHandle): Promise<boolean> {
     return true;
   }
@@ -543,6 +548,19 @@ export class IncludeExtractor implements ContractExtractor {
         // (PR #1156 follow-up review: `../` relative includes produce
         // spurious consumer contracts.)
         if (cleaned.startsWith('../') || cleaned.startsWith('..\\')) continue;
+
+        // Skip macro-style includes: `#include PLATFORM_HEADER` parses as an
+        // identifier under tree-sitter's `(_) @import.source` wildcard. The
+        // identifier text passes the strip/clean step unchanged, so without
+        // this guard we would emit `include::platform_header` as a consumer
+        // contract — and no provider in any repo will ever expose a contract
+        // for a macro identifier (no file is named `PLATFORM_HEADER`). The
+        // contract would sit permanently orphaned in the registry. Real
+        // header references always contain a path separator (`/`, `\`) or an
+        // extension dot (`foo.h`), so an absent both is a reliable signal we
+        // are looking at a macro identifier. (PR #1156 follow-up review:
+        // macro includes emit orphaned consumer contracts.)
+        if (!/[./\\]/.test(cleaned)) continue;
 
         // Local resolution (PR #1156 review finding #4): only accept an
         // exact-suffix match on the *full* include path. The generic

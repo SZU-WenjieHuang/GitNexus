@@ -398,6 +398,44 @@ int main() { return 0; }`,
     });
   });
 
+  // ---- PR #1156 follow-up: macro-style includes ----
+
+  describe('follow-up: macro-style #include emits no consumer contract', () => {
+    it('does not emit a consumer contract for `#include PLATFORM_HEADER` (no separator, no dot)', async () => {
+      // `#include PLATFORM_HEADER` parses under tree-sitter as an identifier
+      // node, slips past the existing system-header / `..` filters, and used
+      // to leak through as a permanently orphaned consumer contract because
+      // no file is ever named `PLATFORM_HEADER`. Verify the macro guard
+      // suppresses it while preserving the real cross-repo include.
+      writeFile(
+        'src/main.cpp',
+        `#include PLATFORM_HEADER
+#include "real/api.h"
+int main() { return 0; }`,
+      );
+
+      const contracts = await extractor.extract(null, tmpDir, makeRepo(tmpDir));
+      const consumers = contracts.filter((c) => c.role === 'consumer');
+
+      expect(consumers.map((c) => c.contractId)).toEqual(['include::real/api.h']);
+    });
+
+    it('skips multiple macro identifiers in the same translation unit', async () => {
+      writeFile(
+        'src/cfg.cpp',
+        `#include CONFIG_HEADER
+#include PLATFORM_HEADER
+#include ASSERT_H_
+int main(){return 0;}`,
+      );
+
+      const contracts = await extractor.extract(null, tmpDir, makeRepo(tmpDir));
+      const consumers = contracts.filter((c) => c.role === 'consumer');
+
+      expect(consumers).toHaveLength(0);
+    });
+  });
+
   // ---- PR #1156 follow-up: graph provider absolute paths ----
 
   describe('follow-up: extractProvidersGraph strips repo root from absolute paths', () => {
