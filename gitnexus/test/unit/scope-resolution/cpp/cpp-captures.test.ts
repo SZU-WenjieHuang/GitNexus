@@ -126,9 +126,7 @@ describe('emitCppScopeCaptures — namespace declarations', () => {
   });
 
   it('anonymous namespace has no @declaration.namespace (only @scope.namespace)', () => {
-    const matches = allMatches('namespace { int x; }', (t) =>
-      t.includes('@declaration.namespace'),
-    );
+    const matches = allMatches('namespace { int x; }', (t) => t.includes('@declaration.namespace'));
     // Anonymous namespace should NOT produce a @declaration.namespace
     expect(matches.length).toBe(0);
   });
@@ -220,9 +218,7 @@ describe('emitCppScopeCaptures — variable declarations', () => {
 
 describe('emitCppScopeCaptures — enum declarations', () => {
   it('captures enum with @declaration.enum', () => {
-    const m = findMatch('enum Color { Red, Green, Blue };', (t) =>
-      t.includes('@declaration.enum'),
-    );
+    const m = findMatch('enum Color { Red, Green, Blue };', (t) => t.includes('@declaration.enum'));
     expect(m).toBeDefined();
     expect(m!['@declaration.name'].text).toBe('Color');
   });
@@ -288,9 +284,7 @@ describe('emitCppScopeCaptures — imports', () => {
   });
 
   it('captures using namespace as wildcard import', () => {
-    const m = findMatch('using namespace std;', (t) =>
-      t.includes('@import.using-namespace'),
-    );
+    const m = findMatch('using namespace std;', (t) => t.includes('@import.using-namespace'));
     expect(m).toBeDefined();
     expect(m!['@import.source'].text).toBe('std');
     expect(m!['@import.kind'].text).toBe('wildcard');
@@ -381,9 +375,7 @@ describe('emitCppScopeCaptures — arity enrichment', () => {
   });
 
   it('enriches zero-parameter function', () => {
-    const m = findMatch('void foo() {}', (t) =>
-      t.includes('@declaration.parameter-count'),
-    );
+    const m = findMatch('void foo() {}', (t) => t.includes('@declaration.parameter-count'));
     expect(m).toBeDefined();
     expect(m!['@declaration.parameter-count'].text).toBe('0');
   });

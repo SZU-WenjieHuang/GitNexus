@@ -1,4 +1,4 @@
-export type ContractType = 'http' | 'grpc' | 'topic' | 'lib' | 'custom' | 'include';
+export type ContractType = 'http' | 'grpc' | 'thrift' | 'topic' | 'lib' | 'custom' | 'include';
 export type MatchType = 'exact' | 'manifest' | 'wildcard' | 'bm25' | 'embedding';
 export type ContractRole = 'provider' | 'consumer';
 

@@ -151,11 +151,7 @@ describe('C++ import target resolution (resolveCppImportTarget)', () => {
   });
 
   it('resolves suffix match with depth tiebreak', () => {
-    const result = resolveCppImportTarget(
-      'foo.h',
-      'main.cpp',
-      new Set(['a/b/c/foo.h', 'z/foo.h']),
-    );
+    const result = resolveCppImportTarget('foo.h', 'main.cpp', new Set(['a/b/c/foo.h', 'z/foo.h']));
     expect(result).toBe('z/foo.h');
   });
 

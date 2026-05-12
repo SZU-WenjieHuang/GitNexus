@@ -45,10 +45,7 @@ describe('IncludeExtractor', () => {
 
       expect(providers).toHaveLength(2);
       const ids = providers.map((p) => p.contractId).sort();
-      expect(ids).toEqual([
-        'include::map/base/types.h',
-        'include::map/base/view.h',
-      ]);
+      expect(ids).toEqual(['include::map/base/types.h', 'include::map/base/view.h']);
       expect(providers[0].type).toBe('include');
       expect(providers[0].confidence).toBeGreaterThanOrEqual(0.95);
     });
@@ -91,10 +88,7 @@ int main() { return 0; }`,
 
       expect(consumers).toHaveLength(2);
       const ids = consumers.map((c) => c.contractId).sort();
-      expect(ids).toEqual([
-        'include::map/base/types.h',
-        'include::map/base/view.h',
-      ]);
+      expect(ids).toEqual(['include::map/base/types.h', 'include::map/base/view.h']);
       expect(consumers[0].type).toBe('include');
       expect(consumers[0].confidence).toBe(0.85);
     });
@@ -181,22 +175,11 @@ int main() { return 0; }`,
       fs.mkdirSync(consumerDir, { recursive: true });
       const consumerFile = path.join(consumerDir, 'src/controller.cpp');
       fs.mkdirSync(path.dirname(consumerFile), { recursive: true });
-      fs.writeFileSync(
-        consumerFile,
-        '#include "map/base/dice_map_view.h"\nvoid init() {}',
-      );
+      fs.writeFileSync(consumerFile, '#include "map/base/dice_map_view.h"\nvoid init() {}');
 
       try {
-        const providerContracts = await extractor.extract(
-          null,
-          providerDir,
-          makeRepo(providerDir),
-        );
-        const consumerContracts = await extractor.extract(
-          null,
-          consumerDir,
-          makeRepo(consumerDir),
-        );
+        const providerContracts = await extractor.extract(null, providerDir, makeRepo(providerDir));
+        const consumerContracts = await extractor.extract(null, consumerDir, makeRepo(consumerDir));
 
         const providers = providerContracts.filter((c) => c.role === 'provider');
         const consumers = consumerContracts.filter((c) => c.role === 'consumer');
@@ -220,14 +203,8 @@ int main() { return 0; }`,
 
   describe('deduplication', () => {
     it('deduplicates same include from multiple source files', async () => {
-      writeFile(
-        'src/a.cpp',
-        '#include "ext/api.h"\nvoid a() {}',
-      );
-      writeFile(
-        'src/b.cpp',
-        '#include "ext/api.h"\nvoid b() {}',
-      );
+      writeFile('src/a.cpp', '#include "ext/api.h"\nvoid a() {}');
+      writeFile('src/b.cpp', '#include "ext/api.h"\nvoid b() {}');
 
       const contracts = await extractor.extract(null, tmpDir, makeRepo(tmpDir));
       const consumers = contracts.filter((c) => c.role === 'consumer');
