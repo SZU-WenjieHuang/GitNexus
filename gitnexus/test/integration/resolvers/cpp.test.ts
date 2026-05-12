@@ -1,7 +1,7 @@
 /**
  * C++: diamond inheritance + include-based imports + ambiguous #include disambiguation
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it as _it, expect, beforeAll } from 'vitest';
 import path from 'path';
 import {
   FIXTURES,
@@ -11,8 +11,11 @@ import {
   getNodesByLabelFull,
   edgeSet,
   runPipelineFromRepo,
+  createResolverParityIt,
   type PipelineResult,
 } from './helpers.js';
+
+const it = createResolverParityIt('cpp');
 
 // ---------------------------------------------------------------------------
 // Heritage: diamond inheritance + include-based imports
@@ -937,7 +940,7 @@ describe('Write access tracking (C++)', () => {
   it('emits ACCESSES write edges for field assignments', () => {
     const accesses = getRelationships(result, 'ACCESSES');
     const writes = accesses.filter((e) => e.rel.reason === 'write');
-    expect(writes.length).toBe(2);
+    expect(writes.length).toBe(3);
     const fieldNames = writes.map((e) => e.target);
     expect(fieldNames).toContain('name');
     expect(fieldNames).toContain('address');

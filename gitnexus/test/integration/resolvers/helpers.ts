@@ -44,6 +44,7 @@ const LEGACY_RESOLVER_PARITY_EXPECTED_FAILURES: Readonly<Record<string, Readonly
     'binds the call to alpha/services/sync.py, not omega',
     'lex tiebreak still picks alpha/services/sync.py with reversed file-write order',
   ]),
+  cpp: new Set<string>([]),
 };
 
 type ResolverParityEnv = Readonly<Record<string, string | undefined>>;

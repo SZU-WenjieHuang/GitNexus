@@ -716,6 +716,7 @@ export const processCalls = async (
     propertyName: string;
     filePath: string;
     srcId: string;
+    line?: number;
   }[] = [];
   // Phase P cross-file: accumulate heritage across files for cross-file isSubclassOf.
   // Used as a secondary check when per-file parentMap lacks the relationship — helps
@@ -933,7 +934,7 @@ export const processCalls = async (
           // Defer resolution: Ruby attr_accessor properties are registered during
           // this same loop, so cross-file lookups fail if the declaring file hasn't
           // been processed yet. Collect now, resolve after all files are done.
-          pendingWrites.push({ receiverTypeName, propertyName, filePath: file.path, srcId });
+          pendingWrites.push({ receiverTypeName, propertyName, filePath: file.path, srcId, line: captureMap['assignment'].startPosition.row + 1 });
         }
         // Assignment-only capture (no @call sibling): skip the rest of this
         // forEach iteration — this acts as a `continue` in the match loop.
@@ -1382,7 +1383,7 @@ export const processCalls = async (
     );
     if (fieldOwner) {
       graph.addRelationship({
-        id: generateId('ACCESSES', `${pw.srcId}:${fieldOwner.nodeId}:write`),
+        id: generateId('ACCESSES', `${pw.srcId}:${fieldOwner.nodeId}:write${pw.line !== undefined ? `:${pw.line}` : ''}`),
         sourceId: pw.srcId,
         targetId: fieldOwner.nodeId,
         type: 'ACCESSES',
@@ -2979,7 +2980,7 @@ export const processAssignmentsFromExtracted = (
     const fieldOwner = resolveFieldOwnership(receiverTypeName, asn.propertyName, asn.filePath, ctx);
     if (!fieldOwner) continue;
     graph.addRelationship({
-      id: generateId('ACCESSES', `${asn.sourceId}:${fieldOwner.nodeId}:write`),
+      id: generateId('ACCESSES', `${asn.sourceId}:${fieldOwner.nodeId}:write${asn.line !== undefined ? `:${asn.line}` : ''}`),
       sourceId: asn.sourceId,
       targetId: fieldOwner.nodeId,
       type: 'ACCESSES',

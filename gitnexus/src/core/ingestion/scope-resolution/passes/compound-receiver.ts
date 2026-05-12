@@ -32,7 +32,7 @@ import {
 /** Max depth for compound-receiver chain resolution (`a().b().c().d()`).
  *  Practical code rarely exceeds 3-4 hops; the cap prevents
  *  pathological recursion if the receiver text is malformed. */
-const COMPOUND_RECEIVER_MAX_DEPTH = 4;
+const COMPOUND_RECEIVER_MAX_DEPTH = 6;
 
 const MAP_TUPLE_SENTINEL_RE = /^__MAP_TUPLE_(\d+)__:(.+)$/;
 

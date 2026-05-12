@@ -6,19 +6,16 @@ import { readRegistry, type RegistryEntry } from '../../storage/repo-manager.js'
 import type { GroupConfig, RepoHandle, RepoSnapshot, StoredContract, CrossLink } from './types.js';
 import { HttpRouteExtractor } from './extractors/http-route-extractor.js';
 import { GrpcExtractor } from './extractors/grpc-extractor.js';
-import { ThriftExtractor } from './extractors/thrift-extractor.js';
 import { TopicExtractor } from './extractors/topic-extractor.js';
 import { IncludeExtractor } from './extractors/include-extractor.js';
 import { ManifestExtractor } from './extractors/manifest-extractor.js';
-import { discoverWorkspaceLinks } from './extractors/workspace-extractor.js';
-import { buildProviderIndex, runExactMatch, runWildcardMatch } from './matching.js';
+import { runExactMatch } from './matching.js';
 import { detectServiceBoundaries, assignService } from './service-boundary-detector.js';
 import type { CypherExecutor } from './contract-extractor.js';
 import { writeContractRegistry } from './storage.js';
 import { writeBridge } from './bridge-db.js';
 import type { ContractRegistry } from './types.js';
 
-import { logger } from '../logger.js';
 export interface SyncOptions {
   extractorOverride?:
     | ((repo: RepoHandle) => Promise<StoredContract[]>)
@@ -89,18 +86,15 @@ export async function syncGroup(config: GroupConfig, opts?: SyncOptions): Promis
   let autoContracts: StoredContract[] = [];
   let manifestCrossLinks: CrossLink[] = [];
   let dbExecutors: Map<string, CypherExecutor> | undefined;
-  let registryEntries: RegistryEntry[] | undefined;
 
   const eo = opts?.extractorOverride;
   if (eo && eo.length === 0) {
     autoContracts = await (eo as () => Promise<StoredContract[]>)();
   } else {
-    registryEntries = await readRegistry();
-    const entries = registryEntries;
+    const entries = await readRegistry();
     const resolve = opts?.resolveRepoHandle ?? defaultResolveHandle(entries);
     const httpEx = new HttpRouteExtractor();
     const grpcEx = new GrpcExtractor();
-    const thriftEx = new ThriftExtractor();
     const topicEx = new TopicExtractor();
     const includeEx = new IncludeExtractor();
     dbExecutors = new Map<string, CypherExecutor>();
@@ -140,17 +134,6 @@ export async function syncGroup(config: GroupConfig, opts?: SyncOptions): Promis
 
           if (config.detect.grpc) {
             const extracted = await grpcEx.extract(executor, handle.repoPath, handle);
-            for (const c of extracted) {
-              autoContracts.push({
-                ...c,
-                repo: groupPath,
-                service: assignService(c.symbolRef.filePath, boundaries),
-              });
-            }
-          }
-
-          if (config.detect.thrift) {
-            const extracted = await thriftEx.extract(executor, handle.repoPath, handle);
             for (const c of extracted) {
               autoContracts.push({
                 ...c,
@@ -208,69 +191,44 @@ export async function syncGroup(config: GroupConfig, opts?: SyncOptions): Promis
     }
   }
 
-  // Auto-discover workspace dependency contracts (Rust Cargo workspaces, etc.)
-  // and merge them with explicit manifest links. Discovered links use the same
-  // ManifestExtractor pipeline as hand-written links in group.yaml.
-  let allLinks = [...config.links];
-
-  if (config.detect.workspace_deps) {
-    const repoPaths = new Map<string, string>();
-    if (!registryEntries) registryEntries = await readRegistry();
-    for (const [groupPath, regName] of Object.entries(config.repos)) {
-      const e = registryEntries.find((en) => en.name === regName);
-      if (e) repoPaths.set(groupPath, e.path);
-    }
-
-    const wsResult = await discoverWorkspaceLinks(config.repos, repoPaths, dbExecutors);
-    if (wsResult.links.length > 0) {
-      allLinks = [...allLinks, ...wsResult.links];
-      if (opts?.verbose) {
-        for (const s of wsResult.stats) {
-          logger.info(
-            `  workspace-deps: discovered ${s.linkCount} cross-${s.ecosystem.toLowerCase()} links from ${s.projectCount} ${s.ecosystem} projects`,
-          );
-        }
-      }
-    }
-  }
-
-  // Process manifest links declared in group.yaml (plus any auto-discovered).
+  // Process manifest links declared in group.yaml.
   // ManifestExtractor is fully implemented but was never wired into this
   // pipeline — config.links were parsed and validated but silently dropped.
   // Placed after the DB try/finally: resolveSymbol falls back to synthetic
   // UIDs when dbExecutors is undefined or a pool is closed, so cross-links
   // are always generated regardless of whether real DB executors are available.
-  if (allLinks.length > 0) {
+  if (config.links.length > 0) {
+    // Warn about dangling links that reference repos not declared in config.repos.
+    // They still generate cross-links via synthetic UIDs (determinism is preserved),
+    // but the operator probably meant something that now silently does nothing useful.
     const knownRepos = new Set(Object.keys(config.repos));
-    for (const link of allLinks) {
+    for (const link of config.links) {
       const dangling = [link.from, link.to].filter((r) => !knownRepos.has(r));
       if (dangling.length > 0) {
-        logger.warn(
+        console.warn(
           `[group/sync] manifest link ${link.type}:${link.contract} references repos not in config.repos: ${dangling.join(', ')} — cross-links will use synthetic UIDs`,
         );
       }
     }
 
     const manifestEx = new ManifestExtractor();
-    const manifestResult = await manifestEx.extractFromManifest(allLinks, dbExecutors);
+    const manifestResult = await manifestEx.extractFromManifest(config.links, dbExecutors);
     autoContracts.push(...manifestResult.contracts);
     manifestCrossLinks = manifestResult.crossLinks;
     if (opts?.verbose) {
-      logger.info(
-        `  manifest: ${manifestCrossLinks.length} cross-links from ${allLinks.length} links (${config.links.length} declared + ${allLinks.length - config.links.length} discovered)`,
+      console.log(
+        `  manifest: ${manifestCrossLinks.length} cross-links from ${config.links.length} declared links`,
       );
     }
   }
 
-  const providerIndex = buildProviderIndex(autoContracts, config.matching);
-  const { matched, unmatched } = runExactMatch(autoContracts, providerIndex, config.matching);
-  const wildcard = runWildcardMatch(unmatched, providerIndex);
+  const { matched, unmatched } = runExactMatch(autoContracts);
 
   // Dedupe cross-links. Manifest contracts participate in runExactMatch, so a
   // manifest-declared link can also emit a matchType:'exact' CrossLink with the
   // same endpoints. Prefer the manifest version — it reflects operator intent
   // and carries matchType:'manifest' which downstream consumers may rely on.
-  const crossLinks = dedupeCrossLinks([...manifestCrossLinks, ...matched, ...wildcard.matched]);
+  const crossLinks = dedupeCrossLinks([...manifestCrossLinks, ...matched]);
   const allContracts: StoredContract[] = autoContracts;
 
   const registry: ContractRegistry = {
@@ -284,34 +242,18 @@ export async function syncGroup(config: GroupConfig, opts?: SyncOptions): Promis
 
   if (opts?.groupDir && !opts.skipWrite) {
     await writeContractRegistry(opts.groupDir, registry);
-    // writeBridge failure (disk full, schema error, permission denied) must
-    // not mask the registry — contracts.json was just written successfully
-    // and is the canonical source of truth. A stale or absent bridge
-    // degrades impact queries to empty results, which is recoverable on
-    // the next sync. Surface the failure as a warning so operators can
-    // act, but do not propagate it.
-    // (PR #1156 follow-up review: writeBridge error in sync.ts propagates
-    // uncaught.)
-    try {
-      await writeBridge(opts.groupDir, {
-        contracts: allContracts,
-        crossLinks,
-        repoSnapshots,
-        missingRepos,
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.warn(
-        { err: msg, groupDir: opts.groupDir },
-        '⚠️ writeBridge failed; contracts.json is intact but bridge.lbug is stale. Re-run `gitnexus group sync` to retry.',
-      );
-    }
+    await writeBridge(opts.groupDir, {
+      contracts: allContracts,
+      crossLinks,
+      repoSnapshots,
+      missingRepos,
+    });
   }
 
   return {
     contracts: allContracts,
     crossLinks,
-    unmatched: wildcard.remaining,
+    unmatched,
     missingRepos,
     repoSnapshots,
   };
