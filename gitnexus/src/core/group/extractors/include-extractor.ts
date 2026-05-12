@@ -6,7 +6,12 @@ import Cpp from 'tree-sitter-cpp';
 import type { ContractExtractor, CypherExecutor } from '../contract-extractor.js';
 import type { ExtractedContract, RepoHandle } from '../types.js';
 import { readSafe } from './fs-utils.js';
-import { buildSuffixIndex, suffixResolve, type SuffixIndex } from '../../ingestion/import-resolvers/utils.js';
+import {
+  buildSuffixIndex,
+  suffixResolve,
+  type SuffixIndex,
+} from '../../ingestion/import-resolvers/utils.js';
+import { parseSourceSafe } from '../../tree-sitter/safe-parse.js';
 
 /**
  * Cross-repo C/C++ `#include` dependency extractor.
@@ -28,7 +33,7 @@ import { buildSuffixIndex, suffixResolve, type SuffixIndex } from '../../ingesti
 
 const HEADER_EXTENSIONS = new Set(['.h', '.hpp', '.hxx', '.hh']);
 
-const HEADER_GLOB = '**/*.{h,hpp,hxx,hh}';
+const _HEADER_GLOB = '**/*.{h,hpp,hxx,hh}';
 const SOURCE_GLOB = '**/*.{c,cpp,cc,cxx,h,hpp,hxx,hh}';
 
 const STANDARD_IGNORES = [
@@ -51,37 +56,156 @@ const INCLUDE_QUERY_SRC = '(preproc_include path: (_) @import.source) @import';
  */
 const SYSTEM_HEADERS = new Set([
   // C standard
-  'assert.h', 'complex.h', 'ctype.h', 'errno.h', 'fenv.h', 'float.h',
-  'inttypes.h', 'iso646.h', 'limits.h', 'locale.h', 'math.h', 'setjmp.h',
-  'signal.h', 'stdalign.h', 'stdarg.h', 'stdatomic.h', 'stdbool.h',
-  'stddef.h', 'stdint.h', 'stdio.h', 'stdlib.h', 'stdnoreturn.h',
-  'string.h', 'tgmath.h', 'threads.h', 'time.h', 'uchar.h', 'wchar.h',
+  'assert.h',
+  'complex.h',
+  'ctype.h',
+  'errno.h',
+  'fenv.h',
+  'float.h',
+  'inttypes.h',
+  'iso646.h',
+  'limits.h',
+  'locale.h',
+  'math.h',
+  'setjmp.h',
+  'signal.h',
+  'stdalign.h',
+  'stdarg.h',
+  'stdatomic.h',
+  'stdbool.h',
+  'stddef.h',
+  'stdint.h',
+  'stdio.h',
+  'stdlib.h',
+  'stdnoreturn.h',
+  'string.h',
+  'tgmath.h',
+  'threads.h',
+  'time.h',
+  'uchar.h',
+  'wchar.h',
   'wctype.h',
   // C++ standard (extensionless)
-  'algorithm', 'any', 'array', 'atomic', 'barrier', 'bit', 'bitset',
-  'cassert', 'cctype', 'cerrno', 'cfenv', 'cfloat', 'charconv', 'chrono',
-  'cinttypes', 'climits', 'clocale', 'cmath', 'codecvt', 'compare',
-  'complex', 'concepts', 'condition_variable', 'coroutine', 'csetjmp',
-  'csignal', 'cstdarg', 'cstddef', 'cstdint', 'cstdio', 'cstdlib',
-  'cstring', 'ctime', 'cuchar', 'cwchar', 'cwctype', 'deque', 'exception',
-  'execution', 'expected', 'filesystem', 'format', 'forward_list',
-  'fstream', 'functional', 'future', 'generator', 'initializer_list',
-  'iomanip', 'ios', 'iosfwd', 'iostream', 'istream', 'iterator', 'latch',
-  'limits', 'list', 'locale', 'map', 'mdspan', 'memory', 'memory_resource',
-  'mutex', 'new', 'numbers', 'numeric', 'optional', 'ostream', 'print',
-  'queue', 'random', 'ranges', 'ratio', 'regex', 'scoped_allocator',
-  'semaphore', 'set', 'shared_mutex', 'source_location', 'span',
-  'spanstream', 'sstream', 'stack', 'stacktrace', 'stdexcept', 'stdfloat',
-  'stop_token', 'streambuf', 'string', 'string_view', 'strstream',
-  'syncstream', 'system_error', 'thread', 'tuple', 'type_traits',
-  'typeindex', 'typeinfo', 'unordered_map', 'unordered_set', 'utility',
-  'valarray', 'variant', 'vector', 'version',
+  'algorithm',
+  'any',
+  'array',
+  'atomic',
+  'barrier',
+  'bit',
+  'bitset',
+  'cassert',
+  'cctype',
+  'cerrno',
+  'cfenv',
+  'cfloat',
+  'charconv',
+  'chrono',
+  'cinttypes',
+  'climits',
+  'clocale',
+  'cmath',
+  'codecvt',
+  'compare',
+  'complex',
+  'concepts',
+  'condition_variable',
+  'coroutine',
+  'csetjmp',
+  'csignal',
+  'cstdarg',
+  'cstddef',
+  'cstdint',
+  'cstdio',
+  'cstdlib',
+  'cstring',
+  'ctime',
+  'cuchar',
+  'cwchar',
+  'cwctype',
+  'deque',
+  'exception',
+  'execution',
+  'expected',
+  'filesystem',
+  'format',
+  'forward_list',
+  'fstream',
+  'functional',
+  'future',
+  'generator',
+  'initializer_list',
+  'iomanip',
+  'ios',
+  'iosfwd',
+  'iostream',
+  'istream',
+  'iterator',
+  'latch',
+  'limits',
+  'list',
+  'locale',
+  'map',
+  'mdspan',
+  'memory',
+  'memory_resource',
+  'mutex',
+  'new',
+  'numbers',
+  'numeric',
+  'optional',
+  'ostream',
+  'print',
+  'queue',
+  'random',
+  'ranges',
+  'ratio',
+  'regex',
+  'scoped_allocator',
+  'semaphore',
+  'set',
+  'shared_mutex',
+  'source_location',
+  'span',
+  'spanstream',
+  'sstream',
+  'stack',
+  'stacktrace',
+  'stdexcept',
+  'stdfloat',
+  'stop_token',
+  'streambuf',
+  'string',
+  'string_view',
+  'strstream',
+  'syncstream',
+  'system_error',
+  'thread',
+  'tuple',
+  'type_traits',
+  'typeindex',
+  'typeinfo',
+  'unordered_map',
+  'unordered_set',
+  'utility',
+  'valarray',
+  'variant',
+  'vector',
+  'version',
 ]);
 
 /** Path prefixes that indicate system/kernel headers. */
 const SYSTEM_PATH_PREFIXES = [
-  'sys/', 'net/', 'netinet/', 'arpa/', 'linux/', 'asm/', 'bits/', 'gnu/',
-  'mach/', 'machine/', 'xlocale/',
+  'sys/',
+  'net/',
+  'netinet/',
+  'arpa/',
+  'linux/',
+  'asm/',
+  'bits/',
+  'gnu/',
+  'mach/',
+  'machine/',
+  'xlocale/',
 ];
 
 /** Regex fallback for files that exceed tree-sitter's 32 KB parse limit. */
@@ -90,11 +214,7 @@ const INCLUDE_REGEX = /^[ \t]*#\s*include\s*"([^"]+)"/gm;
 // ---------- helpers ----------
 
 function normalizeIncludePath(raw: string): string {
-  return raw
-    .replace(/\\/g, '/')
-    .replace(/^\.\//, '')
-    .replace(/\/+/g, '/')
-    .toLowerCase();
+  return raw.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+/g, '/').toLowerCase();
 }
 
 function isAngleBracketInclude(rawNodeText: string): boolean {
@@ -207,10 +327,7 @@ export class IncludeExtractor implements ContractExtractor {
     }
   }
 
-  private extractProvidersFallback(
-    _repoPath: string,
-    allFiles: string[],
-  ): ExtractedContract[] {
+  private extractProvidersFallback(_repoPath: string, allFiles: string[]): ExtractedContract[] {
     return allFiles
       .filter((f) => isHeaderFile(f))
       .map((f) => {
@@ -268,7 +385,7 @@ export class IncludeExtractor implements ContractExtractor {
       let rawIncludes: string[];
       try {
         parser.setLanguage(lang);
-        const tree = parser.parse(content);
+        const tree = parseSourceSafe(parser, content);
         let matches: Parser.QueryMatch[];
         try {
           matches = query.matches(tree.rootNode);

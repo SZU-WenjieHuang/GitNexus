@@ -295,8 +295,13 @@ function inferCppLiteralType(node: SyntaxNode): string {
     case 'number_literal': {
       const text = node.text;
       // Floating-point literals contain '.', 'e', 'E', or end with 'f'/'F'
-      if (text.includes('.') || text.includes('e') || text.includes('E') ||
-          text.endsWith('f') || text.endsWith('F')) {
+      if (
+        text.includes('.') ||
+        text.includes('e') ||
+        text.includes('E') ||
+        text.endsWith('f') ||
+        text.endsWith('F')
+      ) {
         return 'double';
       }
       return 'int';

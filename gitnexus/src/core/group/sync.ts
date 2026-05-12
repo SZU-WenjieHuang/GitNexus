@@ -205,6 +205,7 @@ export async function syncGroup(config: GroupConfig, opts?: SyncOptions): Promis
     for (const link of config.links) {
       const dangling = [link.from, link.to].filter((r) => !knownRepos.has(r));
       if (dangling.length > 0) {
+        // eslint-disable-next-line no-console
         console.warn(
           `[group/sync] manifest link ${link.type}:${link.contract} references repos not in config.repos: ${dangling.join(', ')} — cross-links will use synthetic UIDs`,
         );
@@ -216,6 +217,7 @@ export async function syncGroup(config: GroupConfig, opts?: SyncOptions): Promis
     autoContracts.push(...manifestResult.contracts);
     manifestCrossLinks = manifestResult.crossLinks;
     if (opts?.verbose) {
+      // eslint-disable-next-line no-console
       console.log(
         `  manifest: ${manifestCrossLinks.length} cross-links from ${config.links.length} declared links`,
       );
