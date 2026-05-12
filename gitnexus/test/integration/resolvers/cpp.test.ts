@@ -941,9 +941,12 @@ describe('Write access tracking (C++)', () => {
     const accesses = getRelationships(result, 'ACCESSES');
     const writes = accesses.filter((e) => e.rel.reason === 'write');
     expect(writes.length).toBe(3);
-    const fieldNames = writes.map((e) => e.target);
-    expect(fieldNames).toContain('name');
-    expect(fieldNames).toContain('address');
+    // Per-field exact counts: both `user.name = ...` and `user.name += ...`
+    // must produce distinct edges (no dedup); single write to `address`.
+    const nameWrites = writes.filter((e) => e.target === 'name');
+    expect(nameWrites.length).toBe(2);
+    const addrWrites = writes.filter((e) => e.target === 'address');
+    expect(addrWrites.length).toBe(1);
     const sources = writes.map((e) => e.source);
     expect(sources).toContain('updateUser');
   });
