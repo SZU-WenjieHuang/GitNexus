@@ -1,7 +1,7 @@
 /**
  * C++: diamond inheritance + include-based imports + ambiguous #include disambiguation
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, expect, beforeAll } from 'vitest';
 import path from 'path';
 import {
   FIXTURES,

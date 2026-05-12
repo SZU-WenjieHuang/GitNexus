@@ -127,8 +127,13 @@ function normalizeCppParamType(raw: string): string {
   t = t.replace(/\b(const|volatile|restrict|mutable|constexpr)\b/g, '').trim();
   // Strip reference/pointer markers
   t = t.replace(/[&*]+\s*$/, '').trim();
-  // Strip template parameters
-  t = t.replace(/<[^>]*>/g, '').trim();
+  // Strip template parameters (loop handles nested: Map<List<int>> → Map)
+  while (t.includes('<')) {
+    const stripped = t.replace(/<[^<>]*>/g, '');
+    if (stripped === t) break; // avoid infinite loop on malformed input
+    t = stripped;
+  }
+  t = t.trim();
   // Map std:: types to canonical short forms
   const STD_MAP: Record<string, string> = {
     'std::string': 'string',

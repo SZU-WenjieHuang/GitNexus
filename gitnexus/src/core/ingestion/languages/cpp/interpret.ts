@@ -64,7 +64,7 @@ export function interpretCppTypeBinding(captures: CaptureMatch): ParsedTypeBindi
     // Synthesize a dotted rawName ("receiver.field") so compound-receiver
     // can resolve the chain: look up receiver's class, then field's type.
     const receiver = captures['@type-binding.member-access-receiver']?.text;
-    if (receiver !== undefined && name !== undefined) {
+    if (receiver !== undefined) {
       return { boundName: name, rawTypeName: `${receiver}.${type}`, source: 'assignment-inferred' };
     }
     source = 'assignment-inferred';
@@ -90,8 +90,13 @@ export function normalizeCppTypeName(text: string): string {
   t = t
     .replace(/\b(const|volatile|restrict|static|extern|inline|mutable|constexpr|consteval)\b/g, '')
     .trim();
-  // Strip template parameters: List<User> → List
-  t = t.replace(/<[^>]*>/g, '').trim();
+  // Strip template parameters (loop handles nested: Map<List<int>> → Map)
+  while (t.includes('<')) {
+    const stripped = t.replace(/<[^<>]*>/g, '');
+    if (stripped === t) break; // avoid infinite loop on malformed input
+    t = stripped;
+  }
+  t = t.trim();
   // Strip pointer stars
   while (t.endsWith('*')) t = t.slice(0, -1).trim();
   while (t.startsWith('*')) t = t.slice(1).trim();

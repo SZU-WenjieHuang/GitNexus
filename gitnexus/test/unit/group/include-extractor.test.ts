@@ -11,8 +11,7 @@ describe('IncludeExtractor', () => {
   let extractor: IncludeExtractor;
 
   beforeEach(() => {
-    tmpDir = path.join(os.tmpdir(), `gitnexus-include-${Date.now()}`);
-    fs.mkdirSync(tmpDir, { recursive: true });
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gitnexus-include-'));
     extractor = new IncludeExtractor();
   });
 
@@ -164,15 +163,13 @@ int main() { return 0; }`,
   describe('cross-repo matching', () => {
     it('provider and consumer produce matching contractIds', async () => {
       // Simulate provider repo (header-only)
-      const providerDir = path.join(os.tmpdir(), `gitnexus-include-provider-${Date.now()}`);
-      fs.mkdirSync(providerDir, { recursive: true });
+      const providerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gitnexus-include-provider-'));
       const providerFile = path.join(providerDir, 'map/base/dice_map_view.h');
       fs.mkdirSync(path.dirname(providerFile), { recursive: true });
       fs.writeFileSync(providerFile, '#pragma once\nclass DiceMapView {};');
 
       // Simulate consumer repo
-      const consumerDir = path.join(os.tmpdir(), `gitnexus-include-consumer-${Date.now()}`);
-      fs.mkdirSync(consumerDir, { recursive: true });
+      const consumerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gitnexus-include-consumer-'));
       const consumerFile = path.join(consumerDir, 'src/controller.cpp');
       fs.mkdirSync(path.dirname(consumerFile), { recursive: true });
       fs.writeFileSync(consumerFile, '#include "map/base/dice_map_view.h"\nvoid init() {}');
