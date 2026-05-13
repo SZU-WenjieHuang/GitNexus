@@ -549,7 +549,7 @@ function pickOverload(
   // The graph schema has no ambiguous-target edge model, so emitting one
   // would arbitrarily pick a candidate and lie about the call's target.
   // PR #1520 review follow-up plan U2 / Claude review Finding 5.
-  if (isOverloadAmbiguousAfterNormalization(candidates)) return OVERLOAD_AMBIGUOUS;
+  if (isOverloadAmbiguousAfterNormalization(candidates, site.arity)) return OVERLOAD_AMBIGUOUS;
   return candidates[0] ?? overloads[0];
 }
 

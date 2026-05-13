@@ -1854,3 +1854,31 @@ describe('C++ namespace-qualified call is not a super receiver', () => {
     expect(getInstanceCalls[0].targetFilePath).toContain('singleton.h');
   });
 });
+
+// ---------------------------------------------------------------------------
+// U4 (follow-up plan 2026-05-13-001): default-argument overload ambiguity.
+// `void f(int); void f(int, int = 0); f(1);` is ambiguous per ISO C++. The
+// OVERLOAD_AMBIGUOUS sentinel from plan 2026-05-12-002 U2 should detect
+// this case via isOverloadAmbiguousAfterNormalization.
+// ---------------------------------------------------------------------------
+
+describe('C++ default-argument overload ambiguity', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'cpp-overload-default-arg-ambiguous'),
+      () => {},
+    );
+  }, 60000);
+
+  it('s.f(1) emits zero CALLS edges when f(int) and f(int, int=0) both match', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const fCalls = calls.filter((c) => c.source === 'run' && c.target === 'f');
+    // Exact .toBe(0): count=1 means arbitrary pick (the bug); count=2+ would
+    // require an ambiguous-target edge model GitNexus does not have. The
+    // resolver must suppress entirely. Standard C++ rejects the call as
+    // ambiguous (GCC/Clang both diagnose).
+    expect(fCalls.length).toBe(0);
+  });
+});

@@ -119,17 +119,32 @@ export function narrowOverloadCandidates(
  */
 export function isOverloadAmbiguousAfterNormalization(
   candidates: readonly SymbolDefinition[],
+  argCount?: number,
 ): boolean {
   if (candidates.length < 2) return false;
   const first = candidates[0].parameterTypes;
   if (first === undefined) return false;
+  // When argCount is provided, compare only the first `argCount` slots —
+  // this catches default-argument ambiguity: `void f(int); void f(int, int = 0);`
+  // called with `f(1)` (argCount=1) leaves both candidates viable because
+  // default args make them arity-compatible, and their first slot is
+  // identical even though full parameterTypes lengths differ.
+  // Without argCount, fall back to full-sequence comparison (the original
+  // int/long normalization-collapse case).
+  const compareUpTo = argCount !== undefined ? argCount : first.length;
+  if (compareUpTo === 0) return false;
+  if (first.length < compareUpTo) return false;
   for (let i = 1; i < candidates.length; i++) {
     const p = candidates[i].parameterTypes;
     if (p === undefined) return false;
-    if (p.length !== first.length) return false;
-    for (let j = 0; j < p.length; j++) {
+    if (p.length < compareUpTo) return false;
+    for (let j = 0; j < compareUpTo; j++) {
       if (p[j] !== first[j]) return false;
     }
+    // When argCount is NOT provided, also require length equality so
+    // distinct-arity candidates that happen to share a prefix don't
+    // collapse to ambiguous (preserves the original int/long contract).
+    if (argCount === undefined && p.length !== first.length) return false;
   }
   return true;
 }
