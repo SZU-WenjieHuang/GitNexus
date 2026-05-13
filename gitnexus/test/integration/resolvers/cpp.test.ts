@@ -1825,3 +1825,32 @@ describe('C++ using-namespace std smoke test', () => {
     expect(intoShim.length).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// U1 (follow-up plan 2026-05-13-001): namespace-qualified or class-qualified
+// calls from outside that class MUST NOT be classified as super-receiver calls.
+// The `isSuperReceiverInContext` hook consults the caller's MRO.
+// ---------------------------------------------------------------------------
+
+describe('C++ namespace-qualified call is not a super receiver', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'cpp-namespace-qualified-not-super'),
+      () => {},
+    );
+  }, 60000);
+
+  it('resolves Singleton::getInstance() from a free function (not as super call)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const getInstanceCalls = calls.filter(
+      (c) => c.source === 'run' && c.target === 'getInstance',
+    );
+    // Exactly 1: routed through the normal qualified-call path, NOT the super
+    // branch. Before the U1 fix the regex `/^[A-Z]\w*::/` matched Singleton::,
+    // entered the super branch with no enclosing class, and dropped the edge.
+    expect(getInstanceCalls.length).toBe(1);
+    expect(getInstanceCalls[0].targetFilePath).toContain('singleton.h');
+  });
+});

@@ -1,4 +1,5 @@
 import type { ParsedFile, SymbolDefinition } from 'gitnexus-shared';
+import { findClassBindingInScope, findEnclosingClassDef } from '../../scope-resolution/scope/walkers.js';
 import { SupportedLanguages } from 'gitnexus-shared';
 import { buildMro, defaultLinearize } from '../../scope-resolution/passes/mro.js';
 import { populateClassOwnedMembers } from '../../scope-resolution/scope/walkers.js';
@@ -76,9 +77,44 @@ export const cppScopeResolver: ScopeResolver = {
     populateCppNonGloballyVisible(parsed);
   },
 
-  isSuperReceiver: (text) =>
-    // C++ super patterns: explicit base class call `Base::method()`
-    /^[A-Z]\w*::/.test(text),
+  // Simple `isSuperReceiver` returns false for C++. Real super
+  // classification is caller-context-dependent and lives in
+  // `isSuperReceiverInContext` below — without scope context the
+  // previous regex `/^[A-Z]\w*::/` misclassified namespace-qualified
+  // calls (e.g., `Singleton::getInstance()`) as super calls and routed
+  // them through the wrong resolution branch.
+  isSuperReceiver: () => false,
+
+  isSuperReceiverInContext: (text, callerScope, scopes) => {
+    // Extract LHS of `::`. C++ super calls take the form `Base::method()`
+    // where `Base` is a direct or indirect base of the caller's
+    // enclosing class. Anything not in `Class::` form is not a super
+    // call.
+    const sepIdx = text.indexOf('::');
+    if (sepIdx <= 0) return false;
+    const lhs = text.slice(0, sepIdx).trim();
+    if (lhs.length === 0) return false;
+
+    // Resolve the LHS in the caller's scope chain. Only class-like
+    // resolutions can be super receivers; Namespace and unresolved
+    // names are not super calls.
+    const lhsDef = findClassBindingInScope(callerScope, lhs, scopes);
+    if (lhsDef === undefined) return false;
+
+    // The caller must have an enclosing class — super calls only make
+    // sense inside a class body. Free functions can use `ClassName::`
+    // for namespace-qualified calls but those are not super.
+    const enclosing = findEnclosingClassDef(callerScope, scopes);
+    if (enclosing === undefined) return false;
+
+    // `lhsDef` must be in the caller's MRO (i.e., the caller's enclosing
+    // class derives from it). The class itself counts as its own MRO
+    // root — `Self::method()` is a qualified self-call, not a super
+    // call, so exclude the caller's own class.
+    if (lhsDef.nodeId === enclosing.nodeId) return false;
+    const mro = scopes.methodDispatch.mroFor(enclosing.nodeId);
+    return mro.includes(lhsDef.nodeId);
+  },
 
   // C++ is statically typed — disable field fallback heuristic
   fieldFallbackOnMethodLookup: false,

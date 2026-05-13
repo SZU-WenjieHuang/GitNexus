@@ -406,9 +406,15 @@ const CPP_SCOPE_QUERY = `
 (call_expression
   function: (identifier) @reference.name) @reference.call.free
 
-;; ─── References — qualified calls (Namespace::func()) ───────────────
+;; ─── References — qualified calls (Namespace func or Class method) ───
+;; Capture the LHS of scope-resolution as the explicit receiver so
+;; qualified static member calls route through receiver-bound-calls
+;; Case 2 (class-name receiver) path. Without the receiver capture,
+;; qualified calls have no explicit receiver and class methods cannot
+;; resolve through receiver-bound paths.
 (call_expression
   function: (qualified_identifier
+    scope: (_) @reference.receiver
     name: (identifier) @reference.name)) @reference.call.qualified
 
 ;; ─── References — member calls (obj.method() / ptr->method()) ───────

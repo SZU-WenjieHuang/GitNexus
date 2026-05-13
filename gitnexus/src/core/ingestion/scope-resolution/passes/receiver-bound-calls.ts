@@ -59,6 +59,7 @@ import { narrowOverloadCandidates, isOverloadAmbiguousAfterNormalization } from 
 type ReceiverBoundProviderSubset = Pick<
   ScopeResolver,
   | 'isSuperReceiver'
+  | 'isSuperReceiverInContext'
   | 'fieldFallbackOnMethodLookup'
   | 'collapseMemberCallsByCallerTarget'
   | 'unwrapCollectionAccessor'
@@ -162,7 +163,14 @@ export function emitReceiverBoundCalls(
       const siteKey = `${parsed.filePath}:${site.atRange.startLine}:${site.atRange.startCol}`;
 
       // ── super branch ─────────────────────────────────────────────
-      if (provider.isSuperReceiver(receiverName)) {
+      // Languages with caller-context-dependent super classification
+      // (C++) define `isSuperReceiverInContext`; we prefer it. Simple
+      // text-only languages (Python, Java, PHP) use the plain hook.
+      const isSuper =
+        provider.isSuperReceiverInContext !== undefined
+          ? provider.isSuperReceiverInContext(receiverName, site.inScope, scopes)
+          : provider.isSuperReceiver(receiverName);
+      if (isSuper) {
         const enclosingClass = findEnclosingClassDef(site.inScope, scopes);
         if (enclosingClass !== undefined) {
           // For super-receiver dispatch (`parent::`, `base.`, `super()`),

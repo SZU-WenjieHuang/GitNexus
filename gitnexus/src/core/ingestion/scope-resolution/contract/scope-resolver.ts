@@ -432,8 +432,46 @@ export interface ScopeResolver {
    * `/^super\s*\(/.test(t)`. Java returns `t === 'super'`. C++ may
    * also need `this` capture. Languages without inheritance return
    * constant `false`.
+   *
+   * For languages where the answer depends on caller context (e.g.
+   * C++, where `Base::method()` is a super call ONLY when `Base` is
+   * actually a base of the caller's enclosing class, and namespace-
+   * qualified calls like `Singleton::getInstance()` must NOT be
+   * misclassified), implement the optional `isSuperReceiverInContext`
+   * variant below. The receiver-bound-calls pass prefers the context-
+   * aware variant when both are defined.
    */
   isSuperReceiver(receiverText: string): boolean;
+
+  /**
+   * Optional context-aware variant of `isSuperReceiver`. When defined,
+   * the receiver-bound-calls pass prefers this hook over the simple
+   * `isSuperReceiver(text)` form. Languages where super classification
+   * is purely text-driven (Python, Java, PHP) omit this hook and the
+   * simple form is used unchanged.
+   *
+   * C++ uses this to distinguish `Base::method()` (super call when
+   * `Base` is in the caller's MRO) from `Singleton::getInstance()`
+   * (ordinary namespace-qualified call). Without this, the regex
+   * heuristic `/^[A-Z]\w*::/` misclassifies any uppercase-qualified
+   * call as a super-receiver call and routes it through the wrong
+   * resolution branch.
+   *
+   * Returns `true` ONLY when:
+   *   - the receiver text parses as `<Name>::<...>` (or another super-
+   *     form the language recognizes), AND
+   *   - `<Name>` resolves (via scope chain) to a class-like def, AND
+   *   - that class is in the MRO of the caller's enclosing class.
+   *
+   * Returns `false` for namespace-qualified calls, unresolved names,
+   * class-qualified calls where the class is NOT in the caller's MRO,
+   * and any text the simple `isSuperReceiver` hook also rejects.
+   */
+  readonly isSuperReceiverInContext?: (
+    receiverText: string,
+    callerScope: ScopeId,
+    scopes: ScopeResolutionIndexes,
+  ) => boolean;
 
   // ─── Optional toggles ──────────────────────────────────────────────────────
 
