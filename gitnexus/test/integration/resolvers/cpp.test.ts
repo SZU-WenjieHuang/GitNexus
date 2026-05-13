@@ -1664,3 +1664,28 @@ describe('C++ anonymous namespace symbols visible in same TU', () => {
     expect(wCalls.length).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// U2: integer-width overload ambiguity suppresses CALLS edge entirely
+// (PR #1520 review follow-up plan U2; Claude review Finding 5)
+// ---------------------------------------------------------------------------
+
+describe('C++ ambiguous integer-width overloads', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'cpp-overload-int-long'),
+      () => {},
+    );
+  }, 60000);
+
+  it('emits zero CALLS edges when process(int)/process(long) collide after normalization', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const processCalls = calls.filter((c) => c.source === 'run' && c.target === 'process');
+    // Exact .toBe(0): any non-zero count is a regression. count=1 = arbitrary
+    // pick (the bug U2 fixes); count=2+ would require an ambiguous-edge model
+    // GitNexus does not have. The resolver must suppress entirely.
+    expect(processCalls.length).toBe(0);
+  });
+});

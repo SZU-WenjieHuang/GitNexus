@@ -88,3 +88,48 @@ export function narrowOverloadCandidates(
 
   return candidates;
 }
+
+/**
+ * Detect when >1 candidate share identical `parameterTypes` after the
+ * per-language normalizer has collapsed distinct underlying types. This
+ * signals "the resolver cannot pick the right overload — the
+ * normalization that helps single-candidate flows now hides a real
+ * ambiguity" and lets callers suppress the edge rather than pick
+ * arbitrarily.
+ *
+ * Concrete trigger (PR #1520 review follow-up plan U2, Claude review
+ * Finding 5): the C++ `arity-metadata.ts` normalizer collapses `int`,
+ * `long`, `short`, `unsigned`, and `size_t` to `'int'`. Without this
+ * check, `process(int)` and `process(long)` both end up with
+ * `parameterTypes === ['int']`, and `pickOverload` arbitrarily picks
+ * the first — emitting a false CALLS edge to the wrong overload.
+ *
+ * Returns false when:
+ *   - 0 or 1 candidates (no ambiguity to detect)
+ *   - any candidate has undefined `parameterTypes` (can't compare)
+ *   - candidates differ in arity or in any parameter-type slot
+ *
+ * Other languages: this check is a precondition gate, not a behavior
+ * change for normal narrowing. Languages whose normalizers do not
+ * collapse distinct types (verified by grep over `*-arity-metadata.ts`
+ * — no `int → int` collapse outside C++) will never produce >1
+ * candidate with identical `parameterTypes` from genuinely distinct
+ * declarations, so this returns false for them. The branch is
+ * effectively C++-only in practice.
+ */
+export function isOverloadAmbiguousAfterNormalization(
+  candidates: readonly SymbolDefinition[],
+): boolean {
+  if (candidates.length < 2) return false;
+  const first = candidates[0].parameterTypes;
+  if (first === undefined) return false;
+  for (let i = 1; i < candidates.length; i++) {
+    const p = candidates[i].parameterTypes;
+    if (p === undefined) return false;
+    if (p.length !== first.length) return false;
+    for (let j = 0; j < p.length; j++) {
+      if (p[j] !== first[j]) return false;
+    }
+  }
+  return true;
+}

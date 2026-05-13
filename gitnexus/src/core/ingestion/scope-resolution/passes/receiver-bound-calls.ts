@@ -51,7 +51,7 @@ import {
 import { tryEmitEdge } from '../graph-bridge/edges.js';
 import { resolveCompoundReceiverClass } from '../passes/compound-receiver.js';
 import { resolveDefGraphId } from '../graph-bridge/ids.js';
-import { narrowOverloadCandidates } from './overload-narrowing.js';
+import { narrowOverloadCandidates, isOverloadAmbiguousAfterNormalization } from './overload-narrowing.js';
 
 /** Subset of `ScopeResolver` consumed by this pass. Accepting the
  *  subset rather than the full provider keeps tests and partial
@@ -454,9 +454,24 @@ export function emitReceiverBoundCalls(
         if (ownerDef !== undefined) {
           const chain = [ownerDef.nodeId, ...scopes.methodDispatch.mroFor(ownerDef.nodeId)];
           let memberDef: SymbolDefinition | undefined;
+          let ambiguous = false;
           for (const ownerId of chain) {
-            memberDef = pickOverload(ownerId, memberName, site, model);
-            if (memberDef !== undefined) break;
+            const picked = pickOverload(ownerId, memberName, site, model);
+            if (picked === OVERLOAD_AMBIGUOUS) {
+              ambiguous = true;
+              break;
+            }
+            if (picked !== undefined) {
+              memberDef = picked;
+              break;
+            }
+          }
+          if (ambiguous) {
+            // Suppress and mark handled so `emitReferencesViaLookup`
+            // doesn't re-emit the pre-resolved reference. See
+            // OVERLOAD_AMBIGUOUS docstring for the upstream cause.
+            handledSites.add(siteKey);
+            continue;
           }
           if (memberDef !== undefined) {
             // For read/write ACCESSES, mirror the legacy DAG's reason
@@ -509,7 +524,7 @@ function pickOverload(
   memberName: string,
   site: ParsedFile['referenceSites'][number],
   model: SemanticModel,
-): SymbolDefinition | undefined {
+): SymbolDefinition | typeof OVERLOAD_AMBIGUOUS | undefined {
   const overloads = model.methods.lookupAllByOwner(ownerId, memberName);
   if (overloads.length === 0) {
     // Non-callable member (field / property / variable) — ACCESSES
@@ -520,5 +535,22 @@ function pickOverload(
   if (overloads.length === 1) return overloads[0];
 
   const candidates = narrowOverloadCandidates(overloads, site.arity, site.argumentTypes);
+  // When narrowing leaves >1 candidate that share identical normalized
+  // parameter-types (e.g., C++ `f(int)` vs `f(long)` both collapsed to
+  // `['int']` by `normalizeCppParamType`), suppress the edge entirely.
+  // The graph schema has no ambiguous-target edge model, so emitting one
+  // would arbitrarily pick a candidate and lie about the call's target.
+  // PR #1520 review follow-up plan U2 / Claude review Finding 5.
+  if (isOverloadAmbiguousAfterNormalization(candidates)) return OVERLOAD_AMBIGUOUS;
   return candidates[0] ?? overloads[0];
 }
+
+/**
+ * Sentinel returned by `pickOverload` when narrowing leaves >1 candidate
+ * sharing identical normalized parameter-types. Callers should suppress
+ * the CALLS edge AND mark the site as handled so `emitReferencesViaLookup`
+ * does not re-emit from the pre-resolved reference index. See
+ * `pickOverload` JSDoc for the upstream cause (per-language normalizer
+ * collapses distinct types in arity-metadata).
+ */
+export const OVERLOAD_AMBIGUOUS = Symbol('overload-ambiguous');

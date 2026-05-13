@@ -101,6 +101,13 @@ const LEGACY_RESOLVER_PARITY_EXPECTED_FAILURES: Readonly<Record<string, Readonly
     // out of scope.
     'does NOT resolve unqualified save() to User::save via #include',
     'does NOT resolve unqualified foo() to ns::foo via #include',
+    // The legacy DAG path lacks the OVERLOAD_AMBIGUOUS suppression
+    // wired through `pickOverload` + `isOverloadAmbiguousAfterNormalization`,
+    // so it arbitrarily picks the first overload when `f(int)` and
+    // `f(long)` collide after C++ integer-width normalization. Scope-
+    // resolver-only correctness win (PR #1520 review follow-up plan U2 /
+    // Claude review Finding 5); backporting to legacy is out of scope.
+    'emits zero CALLS edges when process(int)/process(long) collide after normalization',
   ]),
 };
 
