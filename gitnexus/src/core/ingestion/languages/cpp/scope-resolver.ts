@@ -8,7 +8,13 @@ import { cppArityCompatibility } from './arity.js';
 import { cppMergeBindings } from './merge-bindings.js';
 import { resolveCppImportTarget } from './import-target.js';
 import { scanCppHeaderFiles } from './header-scan.js';
-import { expandCppWildcardNames, isFileLocal, clearFileLocalNames } from './file-local-linkage.js';
+import {
+  expandCppWildcardNames,
+  isFileLocal,
+  clearFileLocalNames,
+  populateCppNonGloballyVisible,
+  isCppDefGloballyVisible,
+} from './file-local-linkage.js';
 import { populateCppRangeBindings } from './range-bindings.js';
 
 /**
@@ -62,7 +68,13 @@ export const cppScopeResolver: ScopeResolver = {
   buildMro: (graph, parsedFiles, nodeLookup) =>
     buildMro(graph, parsedFiles, nodeLookup, defaultLinearize),
 
-  populateOwners: (parsed: ParsedFile) => populateClassOwnedMembers(parsed),
+  populateOwners: (parsed: ParsedFile) => {
+    populateClassOwnedMembers(parsed);
+    // Track namespace-nested and class-nested defs so the global free-call
+    // fallback and wildcard expansion can suppress them as unqualified
+    // cross-file callables.
+    populateCppNonGloballyVisible(parsed);
+  },
 
   isSuperReceiver: (text) =>
     // C++ super patterns: explicit base class call `Base::method()`
@@ -80,10 +92,24 @@ export const cppScopeResolver: ScopeResolver = {
   // for cross-file propagation and compound-receiver chain resolution.
   // cppBindingScopeFor hoists @type-binding.return to Module scope.
   hoistTypeBindingsToModule: true,
-  // C++ `static` functions and anonymous namespace symbols have file-local
-  // linkage — exclude them from global free-call fallback cross-file resolution.
+  // The `isFileLocalDef` hook on the global free-call fallback names
+  // file-local linkage historically, but semantically gates "logically
+  // invisible cross-file" defs. C++ extends this to also reject class-
+  // owned methods/fields and namespace-nested symbols — an unqualified
+  // call from a free function MUST NOT resolve to `User::save` or
+  // `ns::foo` (Cppreference, "Unqualified name lookup"). Without this
+  // gate, the global fallback walks every callable in the workspace
+  // registry and matches any class method or namespace function by
+  // simple name.
   isFileLocalDef: (def: SymbolDefinition) => {
     const simple = def.qualifiedName?.split('.').pop() ?? def.qualifiedName ?? '';
-    return isFileLocal(def.filePath, simple);
+    if (isFileLocal(def.filePath, simple)) return true;
+    // Class-owned (Method/Field) — `populateClassOwnedMembers` already
+    // stamps `ownerId`; cheap fast-path before consulting the scope map.
+    if (def.ownerId !== undefined) return true;
+    // Namespace-nested defs — require qualification cross-file. Scope-
+    // walked at `populateOwners` time into a per-file nodeId set.
+    if (!isCppDefGloballyVisible(def.filePath, def.nodeId)) return true;
+    return false;
   },
 };

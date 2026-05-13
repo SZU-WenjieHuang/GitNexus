@@ -1588,3 +1588,79 @@ describe('C++ Derived : A, B — diamond inheritance via leftmost-base MRO (SM-1
     expect(methodCall!.source).toBe('run');
   });
 });
+
+// ---------------------------------------------------------------------------
+// U1: `#include` must not leak class-owned methods as unqualified bindings
+// ---------------------------------------------------------------------------
+
+describe('C++ include does not leak class methods', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'cpp-include-no-class-leak'),
+      () => {},
+    );
+  }, 60000);
+
+  it('does NOT resolve unqualified save() to User::save via #include', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const leak = calls.filter((c) => c.source === 'run' && c.target === 'save');
+    expect(leak.length).toBe(0);
+  });
+
+  it('preserves the file-level #include IMPORTS edge', () => {
+    const imports = getRelationships(result, 'IMPORTS');
+    expect(imports.length).toBe(1);
+    expect(imports[0].targetFilePath).toBe('user.h');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U1: `#include` must not leak namespace-nested symbols as unqualified bindings
+// ---------------------------------------------------------------------------
+
+describe('C++ include does not leak namespace members', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'cpp-include-no-namespace-leak'),
+      () => {},
+    );
+  }, 60000);
+
+  it('does NOT resolve unqualified foo() to ns::foo via #include', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const leak = calls.filter((c) => c.source === 'run' && c.target === 'foo');
+    expect(leak.length).toBe(0);
+  });
+
+  it('preserves the file-level #include IMPORTS edge', () => {
+    const imports = getRelationships(result, 'IMPORTS');
+    expect(imports.length).toBe(1);
+    expect(imports[0].targetFilePath).toBe('lib.h');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U1: anonymous-namespace symbols remain visible within their declaring TU
+// (positive companion to the cross-file exclusion test below)
+// ---------------------------------------------------------------------------
+
+describe('C++ anonymous namespace symbols visible in same TU', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'cpp-anon-ns-same-file-visible'),
+      () => {},
+    );
+  }, 60000);
+
+  it('resolves run() -> w() within the same TU', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const wCalls = calls.filter((c) => c.source === 'run' && c.target === 'w');
+    expect(wCalls.length).toBe(1);
+  });
+});

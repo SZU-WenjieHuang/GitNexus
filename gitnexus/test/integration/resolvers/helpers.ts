@@ -90,7 +90,18 @@ const LEGACY_RESOLVER_PARITY_EXPECTED_FAILURES: Readonly<Record<string, Readonly
     'binds the call to alpha/services/sync.py, not omega',
     'lex tiebreak still picks alpha/services/sync.py with reversed file-write order',
   ]),
-  cpp: new Set<string>([]),
+  cpp: new Set<string>([
+    // The legacy DAG path has no scope-aware filtering on the global
+    // free-call fallback, so `#include`d headers still leak class
+    // methods (`User::save`) and namespace members (`ns::foo`) as
+    // resolution targets for unqualified calls. The scope-resolver
+    // path filters via `populateCppNonGloballyVisible` +
+    // `isFileLocalDef`. Scope-resolver-only correctness win
+    // (PR #1520 review follow-up plan U1); backporting to legacy is
+    // out of scope.
+    'does NOT resolve unqualified save() to User::save via #include',
+    'does NOT resolve unqualified foo() to ns::foo via #include',
+  ]),
 };
 
 type ResolverParityEnv = Readonly<Record<string, string | undefined>>;
