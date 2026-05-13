@@ -1597,10 +1597,7 @@ describe('C++ include does not leak class methods', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'cpp-include-no-class-leak'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'cpp-include-no-class-leak'), () => {});
   }, 60000);
 
   it('does NOT resolve unqualified save() to User::save via #include', () => {
@@ -1674,10 +1671,7 @@ describe('C++ ambiguous integer-width overloads', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'cpp-overload-int-long'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'cpp-overload-int-long'), () => {});
   }, 60000);
 
   it('emits zero CALLS edges when process(int)/process(long) collide after normalization', () => {
@@ -1700,19 +1694,14 @@ describe('C++ anonymous namespace cross-file exclusion (integration)', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'cpp-anon-ns-cross-file'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'cpp-anon-ns-cross-file'), () => {});
   }, 60000);
 
   it('caller.cpp::run -> worker does NOT target helper.cpp anonymous-namespace worker', () => {
     const calls = getRelationships(result, 'CALLS');
     const crossFileLeak = calls.filter(
       (c) =>
-        c.source === 'run' &&
-        c.target === 'worker' &&
-        c.targetFilePath?.includes('helper.cpp'),
+        c.source === 'run' && c.target === 'worker' && c.targetFilePath?.includes('helper.cpp'),
     );
     expect(crossFileLeak.length).toBe(0);
   });
@@ -1743,9 +1732,7 @@ describe('C++ anonymous namespace state-isolation guard', () => {
     const countLeak = (r: PipelineResult): number =>
       getRelationships(r, 'CALLS').filter(
         (c) =>
-          c.source === 'run' &&
-          c.target === 'worker' &&
-          c.targetFilePath?.includes('helper.cpp'),
+          c.source === 'run' && c.target === 'worker' && c.targetFilePath?.includes('helper.cpp'),
       ).length;
     expect(countLeak(r1)).toBe(0);
     expect(countLeak(r2)).toBe(0);
@@ -1800,18 +1787,14 @@ describe('C++ using-namespace std smoke test', () => {
 
   it('resolves the project call (positive guard against vacuous pass)', () => {
     const calls = getRelationships(result, 'CALLS');
-    const projectCalls = calls.filter(
-      (c) => c.source === 'run' && c.target === 'project_helper',
-    );
+    const projectCalls = calls.filter((c) => c.source === 'run' && c.target === 'project_helper');
     expect(projectCalls.length).toBe(1);
   });
 
   it('does NOT leak unqualified bindings for shim STL symbols', () => {
     const calls = getRelationships(result, 'CALLS');
     const stlLeaks = calls.filter(
-      (c) =>
-        c.source === 'run' &&
-        (c.target === 'cout_write' || c.target === 'println'),
+      (c) => c.source === 'run' && (c.target === 'cout_write' || c.target === 'println'),
     );
     expect(stlLeaks.length).toBe(0);
   });
