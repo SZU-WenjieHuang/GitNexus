@@ -51,7 +51,10 @@ import {
 import { tryEmitEdge } from '../graph-bridge/edges.js';
 import { resolveCompoundReceiverClass } from '../passes/compound-receiver.js';
 import { resolveDefGraphId } from '../graph-bridge/ids.js';
-import { narrowOverloadCandidates, isOverloadAmbiguousAfterNormalization } from './overload-narrowing.js';
+import {
+  narrowOverloadCandidates,
+  isOverloadAmbiguousAfterNormalization,
+} from './overload-narrowing.js';
 
 /** Subset of `ScopeResolver` consumed by this pass. Accepting the
  *  subset rather than the full provider keeps tests and partial

@@ -68,7 +68,10 @@ export function clearFileLocalNames(): void {
  */
 export function populateCppNonGloballyVisible(parsed: {
   readonly filePath: string;
-  readonly scopes: readonly { readonly kind: string; readonly ownedDefs: readonly { readonly nodeId: string }[] }[];
+  readonly scopes: readonly {
+    readonly kind: string;
+    readonly ownedDefs: readonly { readonly nodeId: string }[];
+  }[];
 }): void {
   let set = nonGloballyVisibleNodeIds.get(parsed.filePath);
   if (set === undefined) {
@@ -182,7 +185,10 @@ export function expandCppWildcardNames(
     // include (preserves prior behavior for any def whose structural
     // ownership wasn't recorded in `Scope.ownedDefs`).
     const ownerScope = ownerScopeByNodeId.get(def.nodeId);
-    if (ownerScope !== undefined && (ownerScope.kind === 'Namespace' || ownerScope.kind === 'Class')) {
+    if (
+      ownerScope !== undefined &&
+      (ownerScope.kind === 'Namespace' || ownerScope.kind === 'Class')
+    ) {
       continue;
     }
 
