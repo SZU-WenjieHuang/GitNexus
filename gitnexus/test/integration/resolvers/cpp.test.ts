@@ -1689,3 +1689,139 @@ describe('C++ ambiguous integer-width overloads', () => {
     expect(processCalls.length).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// U3: anonymous-namespace symbols MUST NOT leak across translation units
+// (full-pipeline integration test; unit-level coverage exists separately)
+// PR #1520 review follow-up plan U3 / Claude review Finding 7
+// ---------------------------------------------------------------------------
+
+describe('C++ anonymous namespace cross-file exclusion (integration)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'cpp-anon-ns-cross-file'),
+      () => {},
+    );
+  }, 60000);
+
+  it('caller.cpp::run -> worker does NOT target helper.cpp anonymous-namespace worker', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const crossFileLeak = calls.filter(
+      (c) =>
+        c.source === 'run' &&
+        c.target === 'worker' &&
+        c.targetFilePath?.includes('helper.cpp'),
+    );
+    expect(crossFileLeak.length).toBe(0);
+  });
+
+  it('helper.cpp::helper_entry still resolves its OWN anonymous-namespace worker (positive guard)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const sameFileResolve = calls.filter(
+      (c) =>
+        c.source === 'helper_entry' &&
+        c.target === 'worker' &&
+        c.targetFilePath?.includes('helper.cpp'),
+    );
+    // Pairs with the negative test above so a "no edges at all" regression
+    // doesn't make the cross-file leak check pass vacuously.
+    expect(sameFileResolve.length).toBe(1);
+  });
+});
+
+// State-isolation guard: re-run the same fixture and assert identical
+// results. Proves `clearFileLocalNames()` (called from the cpp resolver's
+// `loadResolutionConfig`) is exercised by `runPipelineFromRepo` and
+// that module-level `fileLocalNames` state doesn't bleed across runs.
+describe('C++ anonymous namespace state-isolation guard', () => {
+  it('second run of the same fixture produces identical worker-cross-file edge count', async () => {
+    const fixture = path.join(FIXTURES, 'cpp-anon-ns-cross-file');
+    const r1 = await runPipelineFromRepo(fixture, () => {});
+    const r2 = await runPipelineFromRepo(fixture, () => {});
+    const countLeak = (r: PipelineResult): number =>
+      getRelationships(r, 'CALLS').filter(
+        (c) =>
+          c.source === 'run' &&
+          c.target === 'worker' &&
+          c.targetFilePath?.includes('helper.cpp'),
+      ).length;
+    expect(countLeak(r1)).toBe(0);
+    expect(countLeak(r2)).toBe(0);
+  }, 120000);
+});
+
+// ---------------------------------------------------------------------------
+// U4: `using namespace` with conflicting names from two namespaces
+// The resolver MUST emit zero CALLS edges — emitting one is arbitrary
+// pick; emitting two requires an ambiguous-target edge model GitNexus
+// does not have.
+// Depends on U1 (without scope-aware filtering, `a::foo` and `b::foo`
+// would already be in the importer's wildcard binding set as simple
+// `foo` and this test would pass for the wrong reason).
+// PR #1520 review follow-up plan U4 / Claude review Finding 7
+// ---------------------------------------------------------------------------
+
+describe('C++ using-namespace with conflicting names', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'cpp-using-namespace-conflict'),
+      () => {},
+    );
+  }, 60000);
+
+  it('emits zero CALLS edges for ambiguous foo() bound via two using-namespace declarations', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const fooCalls = calls.filter((c) => c.source === 'run' && c.target === 'foo');
+    expect(fooCalls.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U5: `using namespace std` MUST NOT leak shim STL symbols into unqualified
+// bindings. Uses a fixture-local `namespace std { ... }` shim rather than
+// real <iostream> — captures the wildcard-leak shape deterministically
+// without depending on system-header modeling stability.
+// PR #1520 review follow-up plan U5 / Claude review Finding 7
+// ---------------------------------------------------------------------------
+
+describe('C++ using-namespace std smoke test', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'cpp-using-namespace-std-smoke'),
+      () => {},
+    );
+  }, 60000);
+
+  it('resolves the project call (positive guard against vacuous pass)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const projectCalls = calls.filter(
+      (c) => c.source === 'run' && c.target === 'project_helper',
+    );
+    expect(projectCalls.length).toBe(1);
+  });
+
+  it('does NOT leak unqualified bindings for shim STL symbols', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const stlLeaks = calls.filter(
+      (c) =>
+        c.source === 'run' &&
+        (c.target === 'cout_write' || c.target === 'println'),
+    );
+    expect(stlLeaks.length).toBe(0);
+  });
+
+  it('emits no CALLS or ACCESSES edges from run() into std-shim.h', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const accesses = getRelationships(result, 'ACCESSES');
+    const intoShim = [...calls, ...accesses].filter(
+      (e) => e.source === 'run' && e.targetFilePath?.includes('std-shim.h'),
+    );
+    expect(intoShim.length).toBe(0);
+  });
+});

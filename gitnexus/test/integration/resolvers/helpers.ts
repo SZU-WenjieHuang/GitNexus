@@ -108,6 +108,13 @@ const LEGACY_RESOLVER_PARITY_EXPECTED_FAILURES: Readonly<Record<string, Readonly
     // resolver-only correctness win (PR #1520 review follow-up plan U2 /
     // Claude review Finding 5); backporting to legacy is out of scope.
     'emits zero CALLS edges when process(int)/process(long) collide after normalization',
+    // The legacy DAG path resolves `using namespace a; using namespace b; foo()`
+    // by walking the workspace registry by simple name and binding to
+    // the first match — same shape as the integer-width collision, just
+    // with namespace-resolution as the ambiguity source. Scope-resolver-
+    // only correctness win (PR #1520 review follow-up plan U4 / Claude
+    // review Finding 7); backporting to legacy is out of scope.
+    'emits zero CALLS edges for ambiguous foo() bound via two using-namespace declarations',
   ]),
 };
 
