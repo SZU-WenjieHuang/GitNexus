@@ -16,6 +16,11 @@ import {
   populateCppNonGloballyVisible,
   isCppDefGloballyVisible,
 } from './file-local-linkage.js';
+import {
+  populateCppDependentBases,
+  clearCppDependentBases,
+  isCppDependentBaseMember,
+} from './two-phase-lookup.js';
 import { populateCppRangeBindings } from './range-bindings.js';
 
 /**
@@ -39,8 +44,9 @@ export const cppScopeResolver: ScopeResolver = {
   importEdgeReason: 'cpp-scope: include',
 
   loadResolutionConfig: (repoPath: string) => {
-    // Clear stale file-local-linkage data from any previous invocation.
+    // Clear stale per-pipeline state from any previous invocation.
     clearFileLocalNames();
+    clearCppDependentBases();
     return scanCppHeaderFiles(repoPath);
   },
 
@@ -75,6 +81,10 @@ export const cppScopeResolver: ScopeResolver = {
     // fallback and wildcard expansion can suppress them as unqualified
     // cross-file callables.
     populateCppNonGloballyVisible(parsed);
+    // Resolve recorded template-class → dependent-base simple names to
+    // class nodeIds for two-phase template lookup (U3 of plan
+    // 2026-05-13-001).
+    populateCppDependentBases(parsed);
   },
 
   // Simple `isSuperReceiver` returns false for C++. Real super
@@ -147,5 +157,19 @@ export const cppScopeResolver: ScopeResolver = {
     // walked at `populateOwners` time into a per-file nodeId set.
     if (!isCppDefGloballyVisible(def.filePath, def.nodeId)) return true;
     return false;
+  },
+
+  // C++ two-phase template lookup: inside a class template body,
+  // unqualified calls MUST NOT bind to members of a dependent base
+  // class. The standard requires `this->name()` or `Base<T>::name()`
+  // forms to make the lookup dependent. Without this gate the global
+  // free-call fallback walks the workspace registry and silently binds
+  // unqualified calls to dependent-base members, producing CALLS edges
+  // the compiler would reject. See plan 2026-05-13-001 U3.
+  isCallableVisibleFromCaller: ({ candidate, callerScope, scopes }) => {
+    if (callerScope === undefined || scopes === undefined) return true;
+    // Reject when the candidate is a member of a dependent base of the
+    // caller's enclosing template class. Otherwise allow.
+    return !isCppDependentBaseMember(callerScope, candidate, scopes);
   },
 };

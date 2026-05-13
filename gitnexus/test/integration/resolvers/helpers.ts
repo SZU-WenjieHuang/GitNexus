@@ -115,6 +115,13 @@ const LEGACY_RESOLVER_PARITY_EXPECTED_FAILURES: Readonly<Record<string, Readonly
     // only correctness win (PR #1520 review follow-up plan U4 / Claude
     // review Finding 7); backporting to legacy is out of scope.
     'emits zero CALLS edges for ambiguous foo() bound via two using-namespace declarations',
+    // The legacy DAG path lacks two-phase template lookup. Unqualified
+    // calls inside a class template body bind to dependent-base members
+    // there, producing CALLS edges the compiler would reject (ISO C++
+    // two-phase name lookup). Scope-resolver-only correctness win
+    // (PR #1520 review follow-up plan 2026-05-13-001 U3); backporting
+    // is out of scope.
+    'Derived<T>::g() -> f() does NOT bind to Base<T>::f (dependent base)',
   ]),
 };
 

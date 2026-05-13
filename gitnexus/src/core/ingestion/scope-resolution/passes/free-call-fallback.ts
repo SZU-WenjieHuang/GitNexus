@@ -42,6 +42,8 @@ export function emitFreeCallFallback(
     readonly isCallableVisibleFromCaller?: (ctx: {
       readonly callerParsed: ParsedFile;
       readonly candidate: SymbolDefinition;
+      readonly callerScope?: ScopeId;
+      readonly scopes?: ScopeResolutionIndexes;
     }) => boolean;
   } = {},
 ): number {
@@ -89,7 +91,12 @@ export function emitFreeCallFallback(
           site.arity,
           options.isCallableVisibleFromCaller !== undefined
             ? (candidate) =>
-                options.isCallableVisibleFromCaller!({ callerParsed: parsed, candidate })
+                options.isCallableVisibleFromCaller!({
+                  callerParsed: parsed,
+                  candidate,
+                  callerScope: site.inScope,
+                  scopes,
+                })
             : undefined,
         );
       }

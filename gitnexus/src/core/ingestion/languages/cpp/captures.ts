@@ -11,6 +11,7 @@ import { parseSourceSafe } from '../../../tree-sitter/safe-parse.js';
 import { splitCppInclude, splitCppUsingDecl } from './import-decomposer.js';
 import { computeCppDeclarationArity, computeCppCallArity } from './arity-metadata.js';
 import { markFileLocal } from './file-local-linkage.js';
+import { markCppDependentBase } from './two-phase-lookup.js';
 
 export function emitCppScopeCaptures(
   sourceText: string,
@@ -253,7 +254,213 @@ export function emitCppScopeCaptures(
     out.push(grouped);
   }
 
+  // ── Detect dependent-base relationships for two-phase template lookup ──
+  // Walk the tree once, finding every `template_declaration` whose
+  // child is a class/struct definition with a `base_class_clause` whose
+  // base names reference an in-scope template parameter. Record the
+  // (className, dependentBaseName) pair so `populateCppDependentBases`
+  // (called from the `populateOwners` hook) can resolve names to nodeIds
+  // and the resolver can suppress unqualified-call binding to those
+  // bases per ISO C++ two-phase lookup.
+  detectCppDependentBases(tree.rootNode, filePath);
+
   return out;
+}
+
+/**
+ * Walk the AST finding every template_declaration containing a class or
+ * struct definition with a dependent base. Records (className, baseName)
+ * pairs into the module-level state via `markCppDependentBase`.
+ *
+ * A base is "dependent" when its name (typically a template_type like
+ * `Base<T>`) uses a template parameter of the enclosing template_declaration.
+ * Conservative bias: `typename T::U`, `decltype(...)` and template-template
+ * parameter shapes are also treated as dependent.
+ */
+function detectCppDependentBases(root: SyntaxNode, filePath: string): void {
+  const stack: SyntaxNode[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (node.type === 'template_declaration') {
+      // Collect template-parameter names declared by this declaration.
+      // Inner template_declarations shadow outer ones — handled by the
+      // recursive descent below (each template_declaration creates its
+      // own parameter scope).
+      const params = collectTemplateParameterNames(node);
+
+      // Find the class/struct definition inside this template_declaration.
+      const classNode = findChildOfType(node, [
+        'class_specifier',
+        'struct_specifier',
+      ]);
+      if (classNode !== null) {
+        const className = getTypeIdentifierName(classNode);
+        if (className !== '') {
+          const baseClause = findChildOfType(classNode, ['base_class_clause']);
+          if (baseClause !== null) {
+            for (const base of iterBaseClasses(baseClause)) {
+              if (isBaseDependent(base, params)) {
+                const baseName = extractBaseSimpleName(base);
+                if (baseName !== '') {
+                  markCppDependentBase(filePath, className, baseName);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (child !== null) stack.push(child);
+    }
+  }
+}
+
+/** Collect simple template parameter names from a template_declaration. */
+function collectTemplateParameterNames(templateDecl: SyntaxNode): Set<string> {
+  const names = new Set<string>();
+  const paramList = findChildOfType(templateDecl, ['template_parameter_list']);
+  if (paramList === null) return names;
+  for (let i = 0; i < paramList.childCount; i++) {
+    const param = paramList.child(i);
+    if (param === null) continue;
+    if (
+      param.type === 'type_parameter_declaration' ||
+      param.type === 'optional_type_parameter_declaration' ||
+      param.type === 'variadic_type_parameter_declaration'
+    ) {
+      const idNode = findFirstDescendantOfType(param, 'type_identifier');
+      if (idNode !== null) names.add(idNode.text);
+    } else if (
+      param.type === 'parameter_declaration' ||
+      param.type === 'optional_parameter_declaration' ||
+      param.type === 'variadic_parameter_declaration'
+    ) {
+      // Non-type template parameter (e.g. `template<int N>`).
+      const idNode = findFirstDescendantOfType(param, 'identifier');
+      if (idNode !== null) names.add(idNode.text);
+    } else if (param.type === 'template_template_parameter_declaration') {
+      // template-template parameter (e.g. `template<template<class> class TT>`)
+      const idNode = findFirstDescendantOfType(param, 'type_identifier');
+      if (idNode !== null) names.add(idNode.text);
+    }
+  }
+  return names;
+}
+
+/** Yield each base-class entry from a `base_class_clause`. */
+function* iterBaseClasses(baseClause: SyntaxNode): IterableIterator<SyntaxNode> {
+  for (let i = 0; i < baseClause.childCount; i++) {
+    const child = baseClause.child(i);
+    if (child === null) continue;
+    // Skip ':', ',', and access_specifier nodes — the base names are
+    // type_identifier, template_type, or qualified_identifier.
+    if (
+      child.type === 'type_identifier' ||
+      child.type === 'template_type' ||
+      child.type === 'qualified_identifier'
+    ) {
+      yield child;
+    }
+  }
+}
+
+/**
+ * A base is dependent when:
+ *   - it's a `template_type` and its argument list contains a
+ *     `type_identifier` matching one of the enclosing template's params
+ *     (e.g., `Base<T>` where `T` is a template parameter), OR
+ *   - it contains a `typename`, `decltype`, or `template_template_parameter`
+ *     shape (conservatively treated as dependent).
+ *
+ * Non-dependent: `Base<int>`, `ConcreteBase`, `Base<MyConcrete>` where
+ * `MyConcrete` is not a template parameter.
+ */
+function isBaseDependent(baseNode: SyntaxNode, templateParams: Set<string>): boolean {
+  if (baseNode.type !== 'template_type') {
+    // Bare `type_identifier` or `qualified_identifier` bases — not
+    // dependent (the base name itself doesn't reference a template
+    // parameter at this level).
+    return false;
+  }
+  // Walk all descendants of the template_argument_list looking for any
+  // type_identifier matching a template parameter, or any conservative-
+  // dependent shape.
+  const stack: SyntaxNode[] = [baseNode];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (node.type === 'type_identifier' && templateParams.has(node.text)) {
+      return true;
+    }
+    if (
+      node.type === 'decltype' ||
+      node.type === 'dependent_type' ||
+      node.type === 'template_template_parameter_declaration'
+    ) {
+      return true;
+    }
+    if (node.type === 'qualified_identifier') {
+      // `typename T::U` or `T::nested` — if any inner identifier matches
+      // a template parameter, dependent.
+      for (let i = 0; i < node.childCount; i++) {
+        const c = node.child(i);
+        if (c !== null) stack.push(c);
+      }
+      continue;
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      const c = node.child(i);
+      if (c !== null) stack.push(c);
+    }
+  }
+  return false;
+}
+
+/** Extract the simple name of a base class node. */
+function extractBaseSimpleName(baseNode: SyntaxNode): string {
+  if (baseNode.type === 'type_identifier') return baseNode.text;
+  if (baseNode.type === 'template_type') {
+    const nameNode = baseNode.childForFieldName('name');
+    if (nameNode !== null) return nameNode.text;
+    // Fallback: first type_identifier descendant.
+    const id = findFirstDescendantOfType(baseNode, 'type_identifier');
+    if (id !== null) return id.text;
+  }
+  if (baseNode.type === 'qualified_identifier') {
+    const nameNode = baseNode.childForFieldName('name');
+    if (nameNode !== null) return nameNode.text;
+  }
+  return '';
+}
+
+/** Find the first direct child matching one of the given types. */
+function findChildOfType(node: SyntaxNode, types: readonly string[]): SyntaxNode | null {
+  for (let i = 0; i < node.childCount; i++) {
+    const c = node.child(i);
+    if (c !== null && types.includes(c.type)) return c;
+  }
+  return null;
+}
+
+/** Recursive search for the first descendant of a given type. */
+function findFirstDescendantOfType(node: SyntaxNode, type: string): SyntaxNode | null {
+  if (node.type === type) return node;
+  for (let i = 0; i < node.childCount; i++) {
+    const c = node.child(i);
+    if (c === null) continue;
+    const hit = findFirstDescendantOfType(c, type);
+    if (hit !== null) return hit;
+  }
+  return null;
+}
+
+/** Get the name of a class/struct/template_type node via its `name` field. */
+function getTypeIdentifierName(node: SyntaxNode): string {
+  const nameNode = node.childForFieldName('name');
+  if (nameNode !== null) return nameNode.text;
+  const id = findFirstDescendantOfType(node, 'type_identifier');
+  return id !== null ? id.text : '';
 }
 
 /**

@@ -1865,3 +1865,42 @@ describe('C++ default-argument overload ambiguity', () => {
     expect(fCalls.length).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// U3 (follow-up plan 2026-05-13-001): two-phase template lookup.
+// Inside a class template body, unqualified calls MUST NOT bind to members
+// of a dependent base class. Only `this->name()` or `Base<T>::name()` forms
+// should resolve.
+// ---------------------------------------------------------------------------
+
+describe('C++ two-phase template lookup — dependent base suppression', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'cpp-two-phase-dependent-base'),
+      () => {},
+    );
+  }, 60000);
+
+  it('Derived<T>::g() -> f() does NOT bind to Base<T>::f (dependent base)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const leaks = calls.filter((c) => c.source === 'g' && c.target === 'f');
+    expect(leaks.length).toBe(0);
+  });
+
+  it('Derived<T>::h() -> i does NOT bind to Base<T>::i (dependent base)', () => {
+    const accesses = getRelationships(result, 'ACCESSES');
+    const leaks = accesses.filter((c) => c.source === 'h' && c.target === 'i');
+    expect(leaks.length).toBe(0);
+  });
+});
+
+// NOTE: positive guards (this->f() resolves, non-dependent-base unqualified
+// f() resolves, namespace-qualified utils::ns_helper() resolves) inside
+// template bodies are documented gaps in C++ template-context resolution
+// independent of U3's dependent-base suppression. The U3 core asserts only
+// the negative behavior (dependent-base members are NOT bound by unqualified
+// calls); the positive cases would require additional `this` type-binding
+// and template-body member-lookup work tracked separately. See plan
+// 2026-05-13-001 follow-ups.

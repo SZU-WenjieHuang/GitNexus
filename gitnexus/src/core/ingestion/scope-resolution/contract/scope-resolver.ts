@@ -560,6 +560,13 @@ export interface ScopeResolver {
   readonly isCallableVisibleFromCaller?: (ctx: {
     readonly callerParsed: ParsedFile;
     readonly candidate: SymbolDefinition;
+    /** Caller's enclosing scope id. Languages that gate visibility on
+     *  caller scope (e.g. C++ two-phase template lookup) consult it;
+     *  others ignore. Optional so existing implementations stay valid. */
+    readonly callerScope?: ScopeId;
+    /** ScopeResolutionIndexes for scope-tree walks. Optional for the
+     *  same reason as `callerScope`. */
+    readonly scopes?: ScopeResolutionIndexes;
   }) => boolean;
 
   /**
