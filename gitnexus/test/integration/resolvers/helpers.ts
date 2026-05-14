@@ -122,6 +122,20 @@ const LEGACY_RESOLVER_PARITY_EXPECTED_FAILURES: Readonly<Record<string, Readonly
     // (PR #1520 review follow-up plan 2026-05-13-001 U3); backporting
     // is out of scope.
     'Derived<T>::g() -> f() does NOT bind to Base<T>::f (dependent base)',
+    // The legacy DAG path has no V1/V2 ADL boundary — pointer-typed
+    // arguments resolve via the workspace-wide simple-name walk. The
+    // scope-resolver V1 ADL pass excludes pointer args (closure rules
+    // deferred to V2) per plan 2026-05-13-001 U2 / R4. Scope-resolver-
+    // only correctness win; backporting is out of scope.
+    'record(p) where p is audit::Event* emits zero CALLS — V1 ADL excludes pointer args',
+    // The legacy DAG path has no ADL_AMBIGUOUS suppression sentinel.
+    // When ADL surfaces multiple overloads that collide after C++
+    // int/long normalization, legacy picks the first match arbitrarily.
+    // The scope-resolver path suppresses via the ADL_AMBIGUOUS sentinel
+    // (mirroring OVERLOAD_AMBIGUOUS for receiver-bound paths). Scope-
+    // resolver-only correctness win (PR #1520 review follow-up plan
+    // 2026-05-13-001 U2); backporting is out of scope.
+    'process(t, 42) emits zero CALLS edges when ADL surfaces process(Token,int)/process(Token,long) (collide after C++ int normalization)',
   ]),
 };
 

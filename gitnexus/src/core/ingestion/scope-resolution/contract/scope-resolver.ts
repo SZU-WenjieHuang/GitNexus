@@ -570,6 +570,37 @@ export interface ScopeResolver {
   }) => boolean;
 
   /**
+   * Optional argument-dependent-lookup (ADL / Koenig lookup) hook for
+   * languages with C++-style associated-namespace candidate addition.
+   *
+   * Runs in the free-call fallback AFTER `findCallableBindingInScope`
+   * returns `undefined` and BEFORE `pickUniqueGlobalCallable`. The hook
+   * inspects the call site's argument types, computes the associated
+   * namespace set, and returns either:
+   *   - a unique `SymbolDefinition` — emit the CALLS edge to it.
+   *   - `'ambiguous'` — multiple candidates share normalized parameter
+   *     types; the caller MUST suppress (zero edges). Mirrors the
+   *     OVERLOAD_AMBIGUOUS sentinel from `overload-narrowing.ts`.
+   *   - `undefined` — no ADL candidates; caller falls through to the
+   *     global free-call fallback (`pickUniqueGlobalCallable`).
+   *
+   * Languages without C++-style ADL leave this undefined. The
+   * cross-language contract is "additive tier" — defining the hook never
+   * removes candidates the prior tier would have produced.
+   */
+  readonly resolveAdlCandidates?: (
+    site: {
+      readonly name: string;
+      readonly arity?: number;
+      readonly argumentTypes?: readonly string[];
+      readonly atRange: { readonly startLine: number; readonly startCol: number };
+    },
+    callerParsed: ParsedFile,
+    scopes: ScopeResolutionIndexes,
+    parsedFiles: readonly ParsedFile[],
+  ) => SymbolDefinition | 'ambiguous' | undefined;
+
+  /**
    * Optional post-finalize hook to inject cross-file bindings that
    * aren't modeled via explicit imports. Runs after
    * `buildWorkspaceResolutionIndex` and before

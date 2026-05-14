@@ -1827,9 +1827,7 @@ describe('C++ namespace-qualified call is not a super receiver', () => {
 
   it('resolves Singleton::getInstance() from a free function (not as super call)', () => {
     const calls = getRelationships(result, 'CALLS');
-    const getInstanceCalls = calls.filter(
-      (c) => c.source === 'run' && c.target === 'getInstance',
-    );
+    const getInstanceCalls = calls.filter((c) => c.source === 'run' && c.target === 'getInstance');
     // Exactly 1: routed through the normal qualified-call path, NOT the super
     // branch. Before the U1 fix the regex `/^[A-Z]\w*::/` matched Singleton::,
     // entered the super branch with no enclosing class, and dropped the edge.
@@ -1904,3 +1902,94 @@ describe('C++ two-phase template lookup — dependent base suppression', () => {
 // calls); the positive cases would require additional `this` type-binding
 // and template-body member-lookup work tracked separately. See plan
 // 2026-05-13-001 follow-ups.
+
+// ---------------------------------------------------------------------------
+// U2 (follow-up plan 2026-05-13-001): argument-dependent (Koenig) lookup.
+// Free-function calls with class-typed arguments must consider candidates
+// declared in the argument's enclosing namespace (associated namespace).
+// V1 boundary: only direct enclosing-namespace closure for value class-
+// typed args; pointer / reference / template-spec args excluded.
+// ---------------------------------------------------------------------------
+
+describe('C++ ADL — basic associated-namespace closure', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'cpp-adl-basic'), () => {});
+  }, 60000);
+
+  it('record(e) where e is audit::Event resolves to audit::record via ADL', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const recordCalls = calls.filter((c) => c.source === 'run' && c.target === 'record');
+    // Exactly 1: ordinary lookup is empty (no `using` statement, no local
+    // declaration), ADL surfaces audit::record because audit::Event's
+    // associated namespace is `audit`. The CALLS edge should target the
+    // declaration in audit.h.
+    expect(recordCalls.length).toBe(1);
+    expect(recordCalls[0].targetFilePath).toContain('audit.h');
+  });
+});
+
+describe('C++ ADL — parenthesized name suppresses ADL', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'cpp-adl-suppressed-parens'), () => {});
+  }, 60000);
+
+  it('(record)(e) emits zero CALLS edges — ADL is suppressed by parentheses', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const recordCalls = calls.filter((c) => c.source === 'run' && c.target === 'record');
+    // Exact .toBe(0): ISO C++ [basic.lookup.argdep]/3.1 specifies that the
+    // parenthesized form `(f)(x)` forces ordinary lookup only — ADL must
+    // NOT fire. Without ordinary-lookup candidates (no `using`, no local
+    // declaration), the call goes unresolved.
+    expect(recordCalls.length).toBe(0);
+  });
+});
+
+describe('C++ ADL — pointer-arg V1 boundary', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'cpp-adl-pointer-arg-boundary'),
+      () => {},
+    );
+  }, 60000);
+
+  it('record(p) where p is audit::Event* emits zero CALLS — V1 ADL excludes pointer args', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const recordCalls = calls.filter((c) => c.source === 'run' && c.target === 'record');
+    // Exact .toBe(0): V1 ADL covers only directly-named class-type values
+    // (per plan 2026-05-13-001 R4). Pointer-typed args fall under
+    // associated-entity closure rules deferred to V2. This fixture locks
+    // the boundary in CI so the implementer cannot accidentally extend
+    // V1 to include pointer types. Real ISO C++ would resolve via V2
+    // closure; matching that requires the V2 follow-up plan.
+    expect(recordCalls.length).toBe(0);
+  });
+});
+
+describe('C++ ADL — int/long-collision overloads suppress via OVERLOAD_AMBIGUOUS', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'cpp-adl-ambiguous'), () => {});
+  }, 60000);
+
+  it('process(t, 42) emits zero CALLS edges when ADL surfaces process(Token,int)/process(Token,long) (collide after C++ int normalization)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const processCalls = calls.filter((c) => c.source === 'run' && c.target === 'process');
+    // Exact .toBe(0): both alpha::process(Token, int) and
+    // alpha::process(Token, long) are surfaced via ADL (alpha::Token's
+    // associated namespace). C++ arity-metadata normalizes int/long to
+    // 'int', so both candidates have parameterTypes ['Token', 'int'].
+    // narrowOverloadCandidates can't disambiguate (arg-types are
+    // ['', 'int']), and isOverloadAmbiguousAfterNormalization detects
+    // the collision → ADL_AMBIGUOUS sentinel → caller suppresses.
+    // count=1 is the bug (arbitrary first-pick); count=2 would require
+    // an ambiguous-target edge model GitNexus does not have.
+    expect(processCalls.length).toBe(0);
+  });
+});

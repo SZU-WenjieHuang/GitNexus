@@ -12,6 +12,7 @@ import { splitCppInclude, splitCppUsingDecl } from './import-decomposer.js';
 import { computeCppDeclarationArity, computeCppCallArity } from './arity-metadata.js';
 import { markFileLocal } from './file-local-linkage.js';
 import { markCppDependentBase } from './two-phase-lookup.js';
+import { markCppAdlSiteArgs, markCppAdlSiteNoAdl, type CppAdlArgInfo } from './adl.js';
 
 export function emitCppScopeCaptures(
   sourceText: string,
@@ -192,6 +193,28 @@ export function emitCppScopeCaptures(
       }
     }
 
+    // ── ADL (Koenig lookup) per-site recording ──────────────────────
+    // Only free-call sites (no explicit receiver) participate in ADL —
+    // qualified `Ns::f(s)` and member `obj.f(s)` calls bypass the
+    // free-call fallback entirely (handled by receiver-bound-calls).
+    if (grouped['@reference.call.free'] !== undefined) {
+      const freeCallNode = findNodeAtRange(
+        tree.rootNode,
+        grouped['@reference.call.free']!.range,
+        'call_expression',
+      );
+      if (freeCallNode !== null) {
+        const adlAnchorRange = grouped['@reference.call.free']!.range;
+        if (isParenthesizedFunctionCall(freeCallNode)) {
+          markCppAdlSiteNoAdl(filePath, adlAnchorRange.startLine, adlAnchorRange.startCol);
+        }
+        const adlArgs = inferCppCallAdlArgs(freeCallNode);
+        if (adlArgs.length > 0) {
+          markCppAdlSiteArgs(filePath, adlAnchorRange.startLine, adlAnchorRange.startCol, adlArgs);
+        }
+      }
+    }
+
     // ── Post-process @type-binding.assignment for auto declarations ──
     // The wildcard `type: (_)` in the @type-binding.assignment query
     // pattern matches before the more specific @type-binding.alias and
@@ -289,10 +312,7 @@ function detectCppDependentBases(root: SyntaxNode, filePath: string): void {
       const params = collectTemplateParameterNames(node);
 
       // Find the class/struct definition inside this template_declaration.
-      const classNode = findChildOfType(node, [
-        'class_specifier',
-        'struct_specifier',
-      ]);
+      const classNode = findChildOfType(node, ['class_specifier', 'struct_specifier']);
       if (classNode !== null) {
         const className = getTypeIdentifierName(classNode);
         if (className !== '') {
@@ -585,6 +605,157 @@ function normalizeCppTypeText(text: string): string {
   t = t.replace(/^.*::/, ''); // strip namespace prefix
   t = t.replace(/[*&]/g, '').trim();
   return t;
+}
+
+/**
+ * Detect `(f)(args)` shape — the call-expression's `function` field is a
+ * `parenthesized_expression`. ISO C++ specifies that this form suppresses
+ * ADL (`[basic.lookup.argdep]/3.1`): the parenthesized name is treated as
+ * an ordinary unqualified-lookup-only callee.
+ */
+function isParenthesizedFunctionCall(callNode: SyntaxNode): boolean {
+  const fn = callNode.childForFieldName('function');
+  return fn !== null && fn.type === 'parenthesized_expression';
+}
+
+/**
+ * Per-argument ADL classification: walk each argument of a free call and
+ * decide whether it's a directly-named class type (V1 ADL fires) or
+ * something V1 excludes (pointer, reference, primitive, literal, function
+ * pointer, template specialization).
+ *
+ * V1 only fires for value class-typed args: `void f(N::S); N::S s; f(s);`.
+ * Pointer args (`N::S* p; f(p);`) intentionally return `simpleClassName=''`
+ * to lock the V1 boundary — the `cpp-adl-pointer-arg-boundary` fixture
+ * regression-tests this.
+ */
+function inferCppCallAdlArgs(callNode: SyntaxNode): CppAdlArgInfo[] {
+  const argList = callNode.childForFieldName('arguments');
+  if (argList === null) return [];
+  const out: CppAdlArgInfo[] = [];
+  for (let i = 0; i < argList.childCount; i++) {
+    const child = argList.child(i);
+    if (child === null) continue;
+    if (child.type === ',' || child.type === '(' || child.type === ')') continue;
+    out.push(classifyAdlArg(child));
+  }
+  return out;
+}
+
+const EMPTY_ADL_ARG: CppAdlArgInfo = { simpleClassName: '', isPointer: false, isReference: false };
+
+function classifyAdlArg(argNode: SyntaxNode): CppAdlArgInfo {
+  // Literals and primitive-shaped expressions never have associated namespaces.
+  if (
+    argNode.type === 'number_literal' ||
+    argNode.type === 'string_literal' ||
+    argNode.type === 'raw_string_literal' ||
+    argNode.type === 'char_literal' ||
+    argNode.type === 'true' ||
+    argNode.type === 'false' ||
+    argNode.type === 'null' ||
+    argNode.type === 'nullptr'
+  ) {
+    return EMPTY_ADL_ARG;
+  }
+  // Variable reference — look up its declared type (preserving pointer /
+  // reference / qualified-name shape; the existing arity-narrowing helper
+  // strips this info).
+  if (argNode.type === 'identifier') {
+    return lookupAdlIdentifierType(argNode);
+  }
+  // Other shapes (calls, member access, operators) — V1 unsupported.
+  return EMPTY_ADL_ARG;
+}
+
+function lookupAdlIdentifierType(identNode: SyntaxNode): CppAdlArgInfo {
+  const varName = identNode.text;
+  let scope: SyntaxNode | null = identNode.parent;
+  while (
+    scope !== null &&
+    scope.type !== 'compound_statement' &&
+    scope.type !== 'translation_unit'
+  ) {
+    scope = scope.parent;
+  }
+  if (scope === null) return EMPTY_ADL_ARG;
+
+  for (let i = 0; i < scope.childCount; i++) {
+    const stmt = scope.child(i);
+    if (stmt === null || stmt.type !== 'declaration') continue;
+    const typeNode = stmt.childForFieldName('type');
+    if (typeNode === null) continue;
+    if (typeNode.type === 'placeholder_type_specifier') continue;
+
+    const declarator = stmt.childForFieldName('declarator');
+    if (declarator === null) continue;
+
+    // Unwrap declarator chain to find pointer/reference markers and the
+    // variable name. `init_declarator > pointer_declarator > identifier`
+    // means pointer-typed; `init_declarator > reference_declarator > ...`
+    // means reference-typed; bare `init_declarator > identifier` is value.
+    let isPointer = false;
+    let isReference = false;
+    let inner: SyntaxNode = declarator;
+    let nameText: string | null = null;
+    let safety = 16; // bound walk depth defensively
+    while (safety-- > 0) {
+      if (inner.type === 'pointer_declarator') {
+        isPointer = true;
+        const next = inner.childForFieldName('declarator');
+        if (next === null) break;
+        inner = next;
+        continue;
+      }
+      if (inner.type === 'reference_declarator') {
+        isReference = true;
+        // reference_declarator has a single child (the inner declarator).
+        let next: SyntaxNode | null = null;
+        for (let j = 0; j < inner.namedChildCount; j++) {
+          const c = inner.namedChild(j);
+          if (c !== null) {
+            next = c;
+            break;
+          }
+        }
+        if (next === null) break;
+        inner = next;
+        continue;
+      }
+      if (inner.type === 'init_declarator') {
+        const next = inner.childForFieldName('declarator');
+        if (next === null) break;
+        inner = next;
+        continue;
+      }
+      // Reached the leaf — usually `identifier`. Take its text.
+      nameText = inner.text;
+      break;
+    }
+    if (nameText !== varName) continue;
+
+    const simpleClassName = extractAdlSimpleTypeName(typeNode);
+    return { simpleClassName, isPointer, isReference };
+  }
+  return EMPTY_ADL_ARG;
+}
+
+/** Extract the simple class-like type name from a `type:` field node.
+ *  Returns '' for primitives, template specializations, function pointers,
+ *  and any other shape V1 ADL doesn't support — those args are excluded
+ *  from associated-namespace closure. */
+function extractAdlSimpleTypeName(typeNode: SyntaxNode): string {
+  if (typeNode.type === 'primitive_type') return '';
+  if (typeNode.type === 'sized_type_specifier') return '';
+  if (typeNode.type === 'type_identifier') return typeNode.text;
+  if (typeNode.type === 'qualified_identifier') {
+    const nameNode = typeNode.childForFieldName('name');
+    if (nameNode !== null) return extractAdlSimpleTypeName(nameNode);
+    const id = findFirstDescendantOfType(typeNode, 'type_identifier');
+    return id !== null ? id.text : '';
+  }
+  // template_type (e.g. `vector<int>`), function pointers, decltype — V1 excludes.
+  return '';
 }
 
 /**

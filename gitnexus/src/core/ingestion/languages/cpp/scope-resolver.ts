@@ -1,5 +1,8 @@
 import type { ParsedFile, SymbolDefinition } from 'gitnexus-shared';
-import { findClassBindingInScope, findEnclosingClassDef } from '../../scope-resolution/scope/walkers.js';
+import {
+  findClassBindingInScope,
+  findEnclosingClassDef,
+} from '../../scope-resolution/scope/walkers.js';
 import { SupportedLanguages } from 'gitnexus-shared';
 import { buildMro, defaultLinearize } from '../../scope-resolution/passes/mro.js';
 import { populateClassOwnedMembers } from '../../scope-resolution/scope/walkers.js';
@@ -21,6 +24,12 @@ import {
   clearCppDependentBases,
   isCppDependentBaseMember,
 } from './two-phase-lookup.js';
+import {
+  populateCppAssociatedNamespaces,
+  clearCppAdlState,
+  pickCppAdlCandidates,
+  ADL_AMBIGUOUS,
+} from './adl.js';
 import { populateCppRangeBindings } from './range-bindings.js';
 
 /**
@@ -47,6 +56,7 @@ export const cppScopeResolver: ScopeResolver = {
     // Clear stale per-pipeline state from any previous invocation.
     clearFileLocalNames();
     clearCppDependentBases();
+    clearCppAdlState();
     return scanCppHeaderFiles(repoPath);
   },
 
@@ -85,6 +95,10 @@ export const cppScopeResolver: ScopeResolver = {
     // class nodeIds for two-phase template lookup (U3 of plan
     // 2026-05-13-001).
     populateCppDependentBases(parsed);
+    // Build the class-def → enclosing-namespace-qualified-name map used
+    // by ADL (U2 of plan 2026-05-13-001) to identify each argument type's
+    // associated namespace for Koenig lookup.
+    populateCppAssociatedNamespaces(parsed);
   },
 
   // Simple `isSuperReceiver` returns false for C++. Real super
@@ -171,5 +185,16 @@ export const cppScopeResolver: ScopeResolver = {
     // Reject when the candidate is a member of a dependent base of the
     // caller's enclosing template class. Otherwise allow.
     return !isCppDependentBaseMember(callerScope, candidate, scopes);
+  },
+
+  // C++ argument-dependent / Koenig lookup (U2 of plan 2026-05-13-001).
+  // Fires after `findCallableBindingInScope` returns undefined; surfaces
+  // candidates from the associated namespaces of class-typed arguments.
+  // V1 limitation: only direct enclosing-namespace closure for value
+  // class-typed args; pointer/reference/template-spec args excluded.
+  resolveAdlCandidates: (site, callerParsed, scopes, parsedFiles) => {
+    const result = pickCppAdlCandidates(site, callerParsed, scopes, parsedFiles);
+    if (result === ADL_AMBIGUOUS) return 'ambiguous';
+    return result;
   },
 };
