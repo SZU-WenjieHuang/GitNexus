@@ -148,6 +148,15 @@ const LEGACY_RESOLVER_PARITY_EXPECTED_FAILURES: Readonly<Record<string, Readonly
     // review follow-up plan 2026-05-13-001 U5); backporting is out of
     // scope.
     'outer::foo() resolves to outer::v1::foo (inline child), NOT outer::v0::foo',
+    // Phase 5 cross-unit composition tests assert no false positives
+    // for compositions where the legacy DAG over-resolves. The legacy
+    // path has no template-arg-stripping qualified-receiver logic and
+    // no two-phase dependent-base suppression, so it produces CALLS
+    // edges where the registry-primary path correctly suppresses.
+    // Scope-resolver-only correctness wins (PR #1520 review follow-up
+    // plan 2026-05-13-001 Phase 5); backporting is out of scope.
+    'Base<T>::method() does NOT mis-route to a class method outside the MRO',
+    'unqualified f() inside Derived<T>::g() does NOT bind to outer::v1::Base<T>::f (dependent base across inline namespace)',
   ]),
 };
 

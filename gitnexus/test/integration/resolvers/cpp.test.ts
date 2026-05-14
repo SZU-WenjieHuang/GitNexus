@@ -2091,3 +2091,95 @@ describe('C++ inline namespace — ADL participation', () => {
     expect(recordCalls[0].targetFilePath).toContain('audit.h');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 5 (follow-up plan 2026-05-13-001): cross-unit composition tests.
+// Lock in correct interaction between U1 (super-receiver context), U2 (ADL),
+// U3 (two-phase lookup), and U5 (inline namespaces).
+// ---------------------------------------------------------------------------
+
+describe('C++ Phase 5 U1×U3 — qualified Base<T>::method() inside template body (no false positives)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'cpp-phase5-u1-u3-qualified-base-call'),
+      () => {},
+    );
+  }, 60000);
+
+  it('Base<T>::method() does NOT mis-route to a class method outside the MRO', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const methodCalls = calls.filter((c) => c.source === 'g' && c.target === 'method');
+    // V1 documented gap: cross-file (and same-file) template-class
+    // inheritance is not captured as an EXTENDS edge by the legacy DAG
+    // (the cpp captures.ts has no `base_class_clause` heritage emitter
+    // for template_type bases). Without an EXTENDS edge, MRO is empty
+    // and the U1 super branch can't dispatch. Result: 0 CALLS edges.
+    //
+    // This Phase 5 cross-unit composition test locks in that the
+    // template-arg-stripping U1 logic produces NO false positives —
+    // `Base<T>` correctly classifies as a super-receiver candidate but
+    // (due to empty MRO) doesn't accidentally route to an unrelated
+    // method named `method` via any other case. count > 0 here would
+    // indicate the U1 stripped lookup mis-resolved across cases.
+    expect(methodCalls.length).toBe(0);
+  });
+});
+
+describe('C++ Phase 5 U2×U3 — ADL routes around dependent-base shadow', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'cpp-phase5-u2-u3-adl-from-derived'),
+      () => {},
+    );
+  }, 60000);
+
+  it('record(e) inside Derived<T>::g() resolves via ADL to audit::record (not Base::record)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const recordCalls = calls.filter((c) => c.source === 'g' && c.target === 'record');
+    // Exactly 1: Base::record is class-owned so the global free-call
+    // fallback's `isFileLocalDef` blocks it (and U3's two-phase
+    // suppression also fires for unqualified calls inside template
+    // body when the candidate is a dependent-base member). ADL then
+    // surfaces audit::record via `audit::Event`'s associated namespace.
+    // The two-phase + ADL composition leaves exactly one CALLS edge —
+    // to audit::record in audit.h.
+    expect(recordCalls.length).toBe(1);
+    expect(recordCalls[0].targetFilePath).toContain('audit.h');
+  });
+
+  it('record(e) does NOT bind to Base::record (class-owned dependent-base member)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const baseRecordLeaks = calls.filter(
+      (c) => c.source === 'g' && c.target === 'record' && c.targetFilePath?.includes('base.h'),
+    );
+    expect(baseRecordLeaks.length).toBe(0);
+  });
+});
+
+describe('C++ Phase 5 U3×U5 — template Derived : outer::v1::Base<T> (inline)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'cpp-phase5-u3-u5-inline-base'),
+      () => {},
+    );
+  }, 60000);
+
+  it('unqualified f() inside Derived<T>::g() does NOT bind to outer::v1::Base<T>::f (dependent base across inline namespace)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const fLeaks = calls.filter((c) => c.source === 'g' && c.target === 'f');
+    // Exact .toBe(0): same suppression rationale as the plain U3 fixture
+    // (`cpp-two-phase-dependent-base`) — `f()` is unqualified, Base is a
+    // dependent base, and Base::f is class-owned so the global free-call
+    // fallback's `isFileLocalDef` blocks it. The inline-namespace wrapper
+    // doesn't change the suppression behavior: dependent-base detection
+    // walks the heritage's simple name (`Base`) regardless of the
+    // qualifying namespace path.
+    expect(fLeaks.length).toBe(0);
+  });
+});

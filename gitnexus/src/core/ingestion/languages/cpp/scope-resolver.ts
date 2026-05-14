@@ -120,13 +120,24 @@ export const cppScopeResolver: ScopeResolver = {
   isSuperReceiver: () => false,
 
   isSuperReceiverInContext: (text, callerScope, scopes) => {
-    // Extract LHS of `::`. C++ super calls take the form `Base::method()`
-    // where `Base` is a direct or indirect base of the caller's
-    // enclosing class. Anything not in `Class::` form is not a super
-    // call.
-    const sepIdx = text.indexOf('::');
-    if (sepIdx <= 0) return false;
-    const lhs = text.slice(0, sepIdx).trim();
+    // The receiver text comes from the LHS of `::` in `qualified_identifier`
+    // (e.g., for `Base<T>::method()`, text is `Base<T>`). Strip template
+    // arguments (V1: name-only matching, generics ignored) and any leading
+    // namespace qualifier so the lookup matches the bare class def's
+    // simple name. `Base<T>::method()` → `Base`; `outer::v1::Base<T>` →
+    // `Base`. This handles the Phase 5 cross-unit composition where
+    // qualified base-method calls appear inside template bodies.
+    let lhs = text;
+    const sepIdx = lhs.indexOf('::');
+    if (sepIdx > 0) lhs = lhs.slice(0, sepIdx).trim();
+    // Strip trailing template-argument list (greedy: drop everything from
+    // the first `<` onward — V1 ignores generics).
+    const lt = lhs.indexOf('<');
+    if (lt > 0) lhs = lhs.slice(0, lt).trim();
+    // Strip nested namespace prefix from the receiver text itself (the
+    // `outer::v1::Base` shape that appears in derived-list `base_class_clause`).
+    const lastDoubleColon = lhs.lastIndexOf('::');
+    if (lastDoubleColon >= 0) lhs = lhs.slice(lastDoubleColon + 2).trim();
     if (lhs.length === 0) return false;
 
     // Resolve the LHS in the caller's scope chain. Only class-like
