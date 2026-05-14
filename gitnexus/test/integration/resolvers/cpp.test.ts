@@ -1993,3 +1993,101 @@ describe('C++ ADL — int/long-collision overloads suppress via OVERLOAD_AMBIGUO
     expect(processCalls.length).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// U5 (follow-up plan 2026-05-13-001): inline namespace transitive walking.
+// `inline namespace v1 { ... }` makes its members reachable through the
+// enclosing namespace's qualified lookup as if declared directly there
+// (ISO C++ `[namespace.def]/p4`). Adds a C++-specific
+// `resolveQualifiedReceiverMember` hook on the ScopeResolver contract.
+// ---------------------------------------------------------------------------
+
+describe('C++ inline namespace — outer::foo resolves to inline child', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'cpp-inline-namespace-unqualified'),
+      () => {},
+    );
+  }, 60000);
+
+  it('outer::foo() resolves to outer::v1::foo via inline-namespace transitive walking', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const fooCalls = calls.filter((c) => c.source === 'run' && c.target === 'foo');
+    // Exactly 1: the inline-namespace exemption lets `outer::foo()` reach
+    // the declaration in `outer::v1::foo()`. Without U5 the call would be
+    // unresolved (count = 0).
+    expect(fooCalls.length).toBe(1);
+    expect(fooCalls[0].targetFilePath).toContain('lib.h');
+  });
+});
+
+describe('C++ inline namespace — versioned (v1 inline, v0 not)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'cpp-inline-namespace-versioned'),
+      () => {},
+    );
+  }, 60000);
+
+  it('outer::foo() resolves to outer::v1::foo (inline child), NOT outer::v0::foo', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const fooCalls = calls.filter((c) => c.source === 'run' && c.target === 'foo');
+    // Exactly 1: only inline-namespace children are reachable through the
+    // enclosing namespace's qualified lookup. `v0` is NOT inline so its
+    // `foo` is NOT visible as `outer::foo`.
+    expect(fooCalls.length).toBe(1);
+    expect(fooCalls[0].targetFilePath).toContain('lib.h');
+  });
+});
+
+describe('C++ inline namespace — nested (STL __1-style)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'cpp-inline-namespace-nested'),
+      () => {},
+    );
+  }, 60000);
+
+  it('outer::foo() resolves through two transitive inline namespaces (v1 then experimental)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const fooCalls = calls.filter((c) => c.source === 'run' && c.target === 'foo');
+    // Exactly 1: the resolver descends inline namespaces depth-first, so
+    // `outer::foo` reaches `outer::v1::experimental::foo` through two
+    // transitive inline-namespace hops. Mirrors libc++ `std::__1::vector`
+    // / libstdc++ `std::__cxx11` qualified-call shape.
+    expect(fooCalls.length).toBe(1);
+    expect(fooCalls[0].targetFilePath).toContain('lib.h');
+  });
+});
+
+describe('C++ inline namespace — ADL participation', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'cpp-inline-namespace-adl-participation'),
+      () => {},
+    );
+  }, 60000);
+
+  it('ADL surfaces audit::v1::record through inline-namespace transitive walking', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const recordCalls = calls.filter((c) => c.source === 'run' && c.target === 'record');
+    // Exactly 1: `audit::Event e;` resolves Event's enclosing namespace
+    // to `audit` (the inline child `v1` is transparent — see U2's
+    // computeNamespaceQName walking through the inline scope). ADL then
+    // surfaces every callable named `record` in any namespace scope
+    // matching qname 'audit' across files. Since inline namespaces are
+    // exempted from the non-globally-visible filter, the `record`
+    // declared inside `inline namespace v1` is reachable. count=0
+    // would be the bug — ADL failing to walk inline children.
+    expect(recordCalls.length).toBe(1);
+    expect(recordCalls[0].targetFilePath).toContain('audit.h');
+  });
+});

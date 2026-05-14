@@ -13,6 +13,7 @@ import { computeCppDeclarationArity, computeCppCallArity } from './arity-metadat
 import { markFileLocal } from './file-local-linkage.js';
 import { markCppDependentBase } from './two-phase-lookup.js';
 import { markCppAdlSiteArgs, markCppAdlSiteNoAdl, type CppAdlArgInfo } from './adl.js';
+import { markCppInlineNamespaceRange } from './inline-namespaces.js';
 
 export function emitCppScopeCaptures(
   sourceText: string,
@@ -190,6 +191,29 @@ export function emitCppScopeCaptures(
             JSON.stringify(argTypes),
           );
         }
+      }
+    }
+
+    // ── Inline namespace detection ──────────────────────────────────
+    // `inline namespace v1 { ... }` — tree-sitter-cpp exposes the
+    // `inline` keyword as a child of `namespace_definition`. Record the
+    // namespace's source range so `populateCppInlineNamespaceScopes`
+    // (during populateOwners) can match it back to the corresponding
+    // Namespace scope.
+    if (grouped['@declaration.namespace'] !== undefined) {
+      const anchor = grouped['@declaration.namespace']!;
+      const nsNode = findNodeAtRange(tree.rootNode, anchor.range, 'namespace_definition');
+      if (nsNode !== null && isInlineNamespace(nsNode)) {
+        // Range coords stored in the shared Range shape use 1-based
+        // line numbers (see `ast-helpers.ts` rangeForNode where
+        // `startPosition.row + 1` is applied). Match that convention so
+        // `populateCppInlineNamespaceScopes` can join against `Scope.range`.
+        markCppInlineNamespaceRange(filePath, {
+          startLine: nsNode.startPosition.row + 1,
+          startCol: nsNode.startPosition.column,
+          endLine: nsNode.endPosition.row + 1,
+          endCol: nsNode.endPosition.column,
+        });
       }
     }
 
@@ -605,6 +629,25 @@ function normalizeCppTypeText(text: string): string {
   t = t.replace(/^.*::/, ''); // strip namespace prefix
   t = t.replace(/[*&]/g, '').trim();
   return t;
+}
+
+/**
+ * Detect whether a `namespace_definition` AST node is inline.
+ * Tree-sitter-cpp exposes the `inline` keyword as an anonymous child
+ * node — we scan direct children for that keyword.
+ */
+function isInlineNamespace(nsNode: SyntaxNode): boolean {
+  for (let i = 0; i < nsNode.childCount; i++) {
+    const c = nsNode.child(i);
+    if (c === null) continue;
+    if (c.type === 'inline') return true;
+    // Some grammar variants surface keywords by their text rather than
+    // by a dedicated node type; check both for resilience.
+    if (c.text === 'inline' && (c.type === 'storage_class_specifier' || c.type === 'inline')) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**

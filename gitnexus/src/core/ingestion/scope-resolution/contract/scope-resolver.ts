@@ -601,6 +601,30 @@ export interface ScopeResolver {
   ) => SymbolDefinition | 'ambiguous' | undefined;
 
   /**
+   * Optional resolver for qualified-receiver member calls where the
+   * receiver is a namespace (not a class) and ordinary scope-chain /
+   * import resolution doesn't find the member. C++ uses this for
+   * `outer::foo()` style calls and to walk through inline-namespace
+   * children transitively (`outer::v1::foo` reachable as `outer::foo`).
+   *
+   * Languages whose qualified-name semantics are already covered by the
+   * receiver-bound-calls Case-1 namespace-targets path (e.g., Python's
+   * `import X; X.foo()`) leave this undefined.
+   *
+   * Receiver-bound-calls invokes this hook AFTER Case 1 (namespace
+   * imports) and AFTER Case 2 (class-name receiver) fail to resolve.
+   * Returns the target def, or `undefined` to fall through to the
+   * remaining cases.
+   */
+  readonly resolveQualifiedReceiverMember?: (
+    receiverName: string,
+    memberName: string,
+    callerScope: ScopeId,
+    scopes: ScopeResolutionIndexes,
+    parsedFiles: readonly ParsedFile[],
+  ) => SymbolDefinition | undefined;
+
+  /**
    * Optional post-finalize hook to inject cross-file bindings that
    * aren't modeled via explicit imports. Runs after
    * `buildWorkspaceResolutionIndex` and before

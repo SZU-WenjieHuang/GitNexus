@@ -136,6 +136,18 @@ const LEGACY_RESOLVER_PARITY_EXPECTED_FAILURES: Readonly<Record<string, Readonly
     // resolver-only correctness win (PR #1520 review follow-up plan
     // 2026-05-13-001 U2); backporting is out of scope.
     'process(t, 42) emits zero CALLS edges when ADL surfaces process(Token,int)/process(Token,long) (collide after C++ int normalization)',
+    // The legacy DAG path has no qualified namespace-member resolver
+    // and no inline-namespace awareness. For the versioned fixture
+    // (`outer::v1::foo` inline, `outer::v0::foo` not), the registry-
+    // primary path resolves `outer::foo()` to v1 via the inline
+    // exemption; legacy can't see EITHER and emits zero edges. The
+    // unqualified / nested fixtures coincidentally resolve in legacy
+    // because their global free-call fallback picks the unique simple-
+    // name match; the versioned fixture has two `foo`s and legacy can't
+    // disambiguate. Scope-resolver-only correctness win (PR #1520
+    // review follow-up plan 2026-05-13-001 U5); backporting is out of
+    // scope.
+    'outer::foo() resolves to outer::v1::foo (inline child), NOT outer::v0::foo',
   ]),
 };
 

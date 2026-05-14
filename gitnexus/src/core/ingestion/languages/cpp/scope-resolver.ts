@@ -30,6 +30,11 @@ import {
   pickCppAdlCandidates,
   ADL_AMBIGUOUS,
 } from './adl.js';
+import {
+  clearCppInlineNamespaces,
+  populateCppInlineNamespaceScopes,
+  resolveCppQualifiedNamespaceMember,
+} from './inline-namespaces.js';
 import { populateCppRangeBindings } from './range-bindings.js';
 
 /**
@@ -57,6 +62,7 @@ export const cppScopeResolver: ScopeResolver = {
     clearFileLocalNames();
     clearCppDependentBases();
     clearCppAdlState();
+    clearCppInlineNamespaces();
     return scanCppHeaderFiles(repoPath);
   },
 
@@ -87,6 +93,10 @@ export const cppScopeResolver: ScopeResolver = {
 
   populateOwners: (parsed: ParsedFile) => {
     populateClassOwnedMembers(parsed);
+    // Resolve inline-namespace ranges (recorded at capture time) to
+    // ScopeIds BEFORE `populateCppNonGloballyVisible` runs, so the
+    // inline-namespace exemption sees the populated Set.
+    populateCppInlineNamespaceScopes(parsed);
     // Track namespace-nested and class-nested defs so the global free-call
     // fallback and wildcard expansion can suppress them as unqualified
     // cross-file callables.
@@ -197,4 +207,13 @@ export const cppScopeResolver: ScopeResolver = {
     if (result === ADL_AMBIGUOUS) return 'ambiguous';
     return result;
   },
+
+  // C++ qualified namespace-member resolution (U5 of plan 2026-05-13-001).
+  // Handles `outer::foo()` where `outer` is a namespace (not a class).
+  // Walks each parsed file's namespace scopes by simple name, then
+  // descends transitively through inline-namespace children when
+  // searching for the called member. Returns undefined for non-namespace
+  // receivers so receiver-bound-calls Case 2 still gets a chance.
+  resolveQualifiedReceiverMember: (receiverName, memberName, _callerScope, scopes, parsedFiles) =>
+    resolveCppQualifiedNamespaceMember(receiverName, memberName, parsedFiles, scopes),
 };

@@ -1,4 +1,5 @@
 import type { ParsedFile, Scope, ScopeId, SymbolDefinition } from 'gitnexus-shared';
+import { isCppInlineNamespaceScope } from './inline-namespaces.js';
 
 /**
  * Per-file set of symbol names with file-local linkage.
@@ -69,6 +70,7 @@ export function clearFileLocalNames(): void {
 export function populateCppNonGloballyVisible(parsed: {
   readonly filePath: string;
   readonly scopes: readonly {
+    readonly id: ScopeId;
     readonly kind: string;
     readonly ownedDefs: readonly { readonly nodeId: string }[];
   }[];
@@ -80,6 +82,11 @@ export function populateCppNonGloballyVisible(parsed: {
   }
   for (const scope of parsed.scopes) {
     if (scope.kind !== 'Namespace' && scope.kind !== 'Class') continue;
+    // Inline namespaces (`inline namespace v1 { ... }`) propagate their
+    // members to the enclosing namespace's unqualified-lookup scope per
+    // ISO C++ `[namespace.def]/p4`. Skip them here so cross-file
+    // unqualified lookup can still see their callable defs.
+    if (scope.kind === 'Namespace' && isCppInlineNamespaceScope(scope.id)) continue;
     for (const def of scope.ownedDefs) {
       set.add(def.nodeId);
     }

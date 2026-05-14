@@ -67,6 +67,7 @@ type ReceiverBoundProviderSubset = Pick<
   | 'collapseMemberCallsByCallerTarget'
   | 'unwrapCollectionAccessor'
   | 'hoistTypeBindingsToModule'
+  | 'resolveQualifiedReceiverMember'
 >;
 
 export function emitReceiverBoundCalls(
@@ -294,6 +295,38 @@ export function emitReceiverBoundCalls(
           }
         }
         if (found) continue;
+      }
+
+      // ── Case 1.5: qualified namespace-receiver (language-specific) ───
+      // Languages whose qualified-name semantics need workspace-wide
+      // namespace-scope walking (C++ `outer::foo()`, including inline-
+      // namespace transitive traversal) implement `resolveQualifiedReceiverMember`.
+      // Runs before Case 2 so namespace receivers don't accidentally match a
+      // class with the same simple name.
+      if (provider.resolveQualifiedReceiverMember !== undefined) {
+        const memberDef = provider.resolveQualifiedReceiverMember(
+          receiverName,
+          memberName,
+          site.inScope,
+          scopes,
+          parsedFiles,
+        );
+        if (memberDef !== undefined) {
+          const ok = tryEmitEdge(
+            graph,
+            scopes,
+            nodeLookup,
+            site,
+            memberDef,
+            memberDef.filePath !== parsed.filePath ? 'import-resolved' : 'global',
+            seen,
+            0.85,
+            collapse,
+          );
+          if (ok) emitted++;
+          handledSites.add(siteKey);
+          continue;
+        }
       }
 
       // ── Case 2: class-name receiver ──────────────────────────────
